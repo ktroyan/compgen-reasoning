@@ -568,7 +568,7 @@ class GridDataModule(pl.LightningDataModule):
                     self.task_map,
                     self.max_task_seq_len,
                     self.task_pad_token_id,
-                    use_task_tokens=self.cfg.model.get("use_task_tokens", True)
+                    use_task_tokens=self.cfg.model.get("use_task_tokens", False)
                 )
 
             self.train_ds = make_ds(df_train)
@@ -590,7 +590,7 @@ class GridDataModule(pl.LightningDataModule):
         return src_stacked, tgt_stacked, task_stacked
 
     def train_dataloader(self):
-        return DataLoader(self.train_ds, batch_size=self.train_batch_size, shuffle=True, 
+        return DataLoader(self.train_ds, batch_size=self.train_batch_size, shuffle=self.cfg.data.get("shuffle_train", True),
                           num_workers=self.num_workers, collate_fn=self.collate_fn)
 
     def val_dataloader(self):

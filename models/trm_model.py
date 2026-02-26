@@ -30,6 +30,9 @@ from utility.logging_utils import logger
 from networks.trm_encoder import TRMEncoder
 from networks.trm_decoder import TRMDecoder
 
+from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics
+
+
 class ModelModule(pl.LightningModule):
     def __init__(self, cfg: DictConfig):
         super().__init__()
@@ -83,7 +86,9 @@ class TRMModel(ModelModule):
 
         # Logging Flag
         self.log_samples_flag = cfg.logging.get("log_samples_for_inspection", False)
+        
         # Evolution Tracking Flags
+        self.visualize_predictions = cfg.logging.get("visualize_model_predictions", False)
         self.evol_batch_idx = cfg.logging.get("evolution_batch_idx", 0)
         self.evol_indices = cfg.logging.get("evolution_sample_indices", [0, 1, 2])
         self.evolution_records = {"train": [], "val_id": [], "val_ood":[]}
@@ -162,21 +167,6 @@ class TRMModel(ModelModule):
 
         return logits   # [B, S_grid, output_dim=output_vocab_size]
             
-    # ------------------------------------------------------------------
-    # Helper: Extract Evolution Samples
-    # ------------------------------------------------------------------
-    def _extract_evolution_samples(self, src, tgt, preds):
-        records =[]
-        for idx in self.evol_indices:
-            if idx < len(src):
-                # decode_sample already calls .detach().cpu().tolist(), converting to string safely
-                records.append({
-                    "sample_idx": idx,
-                    "input": self.decode_sample(src[idx]),
-                    "target": self.decode_sample(tgt[idx]),
-                    "prediction": self.decode_sample(preds[idx])
-                })
-        return records
 
     # ------------------------------------------------------------------
     # Lifecycle Hooks
@@ -226,7 +216,6 @@ class TRMModel(ModelModule):
         self.log("train/acc_no_pad", metrics["acc_no_pad"], on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/grid_acc_no_pad", metrics["grid_acc_no_pad"], on_step=True, on_epoch=True, prog_bar=True)
 
-        # Lazy init for samples
         if "train" not in self.epoch_samples:
             self.epoch_samples["train"] = {"first": None, "last": None}
         
@@ -235,7 +224,7 @@ class TRMModel(ModelModule):
             self.epoch_samples["train"]["last"] = (src[-1], tgt[-1], preds[-1])
         # Track sample prediction evolution
         if batch_idx == self.evol_batch_idx:
-            record = self._extract_evolution_samples(src, tgt, preds)
+            record = _extract_evolution_samples(self, src, tgt, preds)
             if record:
                 self.evolution_records["train"].append({
                     "epoch": self.current_epoch,
@@ -286,7 +275,7 @@ class TRMModel(ModelModule):
 
         # Track Evolution
         if batch_idx == self.evol_batch_idx:
-            record = self._extract_evolution_samples(src, tgt, preds)
+            record = _extract_evolution_samples(self, src, tgt, preds)
             if record:
                 self.evolution_records[key].append({
                     "epoch": self.current_epoch,
@@ -315,6 +304,11 @@ class TRMModel(ModelModule):
     def on_train_epoch_end(self):
         if "train" in self.epoch_samples:
             self._log_samples("Train", self.epoch_samples.get("train"))
+
+        # Draw and Save Grids
+        if self.evolution_records["train"] and self.evolution_records["train"][-1]["epoch"] == self.current_epoch:
+            _plot_epoch_grids(self, "train", self.current_epoch, self.evolution_records["train"][-1]["samples"])
+            
         self._record_epoch_metrics()
     
     def on_validation_epoch_end(self):
@@ -323,6 +317,13 @@ class TRMModel(ModelModule):
 
         if "val_ood" in self.epoch_samples and self.epoch_samples["val_ood"].get("last") is not None:
             self._log_samples("Validation (OOD)", self.epoch_samples.get("val_ood"))
+
+        # Draw and Save Grids
+        if self.evolution_records["val_id"] and self.evolution_records["val_id"][-1]["epoch"] == self.current_epoch:
+            _plot_epoch_grids(self, "val_id", self.current_epoch, self.evolution_records["val_id"][-1]["samples"])
+        if self.evolution_records["val_ood"] and self.evolution_records["val_ood"][-1]["epoch"] == self.current_epoch:
+            _plot_epoch_grids(self, "val_ood", self.current_epoch, self.evolution_records["val_ood"][-1]["samples"])
+
         self._record_epoch_metrics()
 
     # ------------------------------------------------------------------
@@ -349,61 +350,8 @@ class TRMModel(ModelModule):
         except Exception as e:
             logger.error(f"Failed to save metrics history: {e}")
             
-        # Automatically generate and save plots
-        self._plot_metrics(cwd)
-
-    def _plot_metrics(self, save_dir: str):
-            try:
-                import matplotlib.pyplot as plt
-            except ImportError:
-                logger.warning("matplotlib is not installed. Skipping metric plots generation.")
-                return
-
-            if not self.epoch_metrics:
-                return
-
-            epochs = [m["epoch"] for m in self.epoch_metrics]
-            
-            # Identify all unique metric keys
-            all_keys = set()
-            for m in self.epoch_metrics:
-                all_keys.update(m.keys())
-            all_keys.discard("epoch")
-
-            # Helper function to extract base metric name
-            def get_base(key_str):
-                return key_str.replace("train/", "").replace("val/id_", "").replace("val/ood_", "")
-
-            # Group metrics into sub-categories by stripping prefixes
-            bases = {get_base(k) for k in all_keys}
-
-            for base in bases:
-                plt.figure(figsize=(10, 6))
-                plotted = False
-                
-                # Find all keys that map strictly to this base
-                for key in sorted(all_keys):
-                    if get_base(key) == base:  # FIXED: exact match instead of .endswith()
-                        values =[m.get(key, None) for m in self.epoch_metrics]
-                        
-                        # Filter missing values
-                        valid_epochs =[e for e, v in zip(epochs, values) if v is not None]
-                        valid_values =[v for v in values if v is not None]
-                        
-                        if valid_values:
-                            plt.plot(valid_epochs, valid_values, marker='o', label=key)
-                            plotted = True
-                            
-                if plotted:
-                    plt.title(f"Evolution of {base}")
-                    plt.xlabel("Epoch")
-                    plt.ylabel(base)
-                    plt.legend()
-                    plt.grid(True)
-                    plot_path = os.path.join(save_dir, f"plot_{base}.png")
-                    plt.savefig(plot_path)
-                    logger.info(f"Saved metric plot to {plot_path}")
-                plt.close()
+        # Generate and save plots
+        _plot_metrics(self, cwd)
 
     # ------------------------------------------------------------------
     # Test

@@ -177,7 +177,7 @@ def main(cfg: DictConfig):
             traceback.print_exc()
 
     # ------------------------------------------------------------------
-    # 3) Instantiate Model module
+    # 4) Instantiate Model module
     # ------------------------------------------------------------------
     model_name = cfg.get("model", {}).get("name", None)
     logger.info(f"Instantiating Model: {model_name}...")
@@ -193,7 +193,7 @@ def main(cfg: DictConfig):
         raise e
 
     # ------------------------------------------------------------------
-    # 4) Run Training and/or Inference
+    # 5) Run Training and/or Inference
     # ------------------------------------------------------------------
 
     # Check if running on GPU and log device info
@@ -221,7 +221,7 @@ def main(cfg: DictConfig):
         logger.info("Skipping Inference (cfg.experiment.run_inference is False)")
 
     # ------------------------------------------------------------------
-    # 5) Log and Save Results
+    # 6) Log and Save Results
     # ------------------------------------------------------------------
     
     # Save final config to the Hydra output directory
