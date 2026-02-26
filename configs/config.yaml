@@ -1,0 +1,40 @@
+# configs/config.yaml
+# Root Hydra configuration file.
+# This file composes all configuration groups together.
+# Hydra uses this as the experiment entry point.
+
+defaults:
+  - _self_
+  - experiment: default
+  - data: default
+  - model: trm_model
+  - network/encoder: trm_encoder
+  - network/decoder: trm_decoder
+  - training: default
+  - inference: default
+  - logging: default
+  - wandb: default
+
+# Global seed
+seed: 42
+
+# Device configuration
+device: "cuda"
+
+# Output directory (Hydra will override this automatically)
+output_dir: ${hydra:runtime.output_dir}
+
+# For debugging
+debug: False
+
+# --- Hydra Output Directory Configuration ---
+hydra:
+  run:
+    # Everything goes into outputs/YYYY-MM-DD/HH-MM-SS
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  output_subdir: .hydra  # saves hydra config files in .hydra subfolder
+  job:
+    chdir: True  # this ensures that all file paths are relative to the Hydra output directory

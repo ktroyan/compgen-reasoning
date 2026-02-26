@@ -1,0 +1,51 @@
+name: "trm_model"
+
+# --- Architecture Constraints (computed in the Data Module) ---
+max_h: ${data.max_h}  # one dimension of the grid, useful to calculate the grid size; e.g. for positional encoding and attention masking
+max_w: ${data.max_w}  # one dimension of the grid, useful to calculate the grid size; e.g. for positional encoding and attention masking
+max_task_seq_len: null  # length of the longest task sequence embeddings (i.e., the sequence of task tokens that describe the task)
+max_seq_len: null   # set by dynamic max sequence length computation; will be updated to: (max_h * max_w) + total_special_tokens
+total_seq_special_tokens_prepended: null  # total number of special tokens in the input sequence (e.g. task tokens + BOS)
+total_seq_special_tokens_appended: null  # total number of special tokens appended to the input sequence (e.g. EOS)
+
+pad_token_id: ${data.pad_token_id}
+
+# --- Dimensions ---
+# Inherit start value from data, but DataModule will overwrite this at runtime
+input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input/embedding layer; it may be different from the output vocab size if we have special tokens that are only used in the input (e.g. task tokens) and that we do not want to predict
+output_vocab_size: ${data.output_vocab_size}
+output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens)
+
+d_model: 128  # input dimension
+hidden_dim: 256
+
+dropout: 0.1
+
+# --- Modeling techniques ---
+use_task_tokens: false
+
+ape:
+  use_ape: true
+  type: "learned"   # learned | 1d-sincos | 2d-sincos
+  mixer: "sum"    # sum | learnable_scaling | weighted_sum | layer_norm
+
+rpe:
+  use_rpe: false
+  type: "rope"  # rope
+
+
+# --- Optimization ---
+optimizer: "adamw"  # "adamw" | "adam" | "sgd"
+lr: 1e-3
+weight_decay: 1e-3
+
+lr_scheduler:
+  type: "cosine" # "cosine" | "step" | "plateau"
+  interval: "epoch"  # 'epoch' or 'step'; whether to call the scheduler at epoch or training step
+  frequency: 1  # how often to call the scheduler w.r.t. the interval
+  monitored_metric: "val/id_loss"
+
+lr_warmup:
+  enabled: true
+  type: "linear"
+  num_steps: 200

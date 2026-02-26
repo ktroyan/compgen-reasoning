@@ -1,0 +1,4 @@
+name: "default_experiment"
+run_training: true
+run_inference: true
+checkpoint_path: null

@@ -1,0 +1,18 @@
+method: bayes
+
+metric:
+  name: val/loss
+  goal: minimize
+
+parameters:
+  training.max_epochs:
+    values: [2, 5]
+
+  training.batch_size:
+    values: [16]
+
+  trm_model.lr:
+    values: [0.001, 0.0005, 0.0001]
+
+  trm_model.hidden_dim:
+    values: [128, 256]

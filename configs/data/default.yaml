@@ -1,0 +1,27 @@
+data_source: "huggingface"  # huggingface or Local
+data_path: "hf://datasets/yassinetb/COGITAO/CompGen/exp_setting_1/experiment_1" # for HF, use 'hf://' schema which points directly to the dataset folder
+num_workers: 4
+
+shuffle_train: false
+
+base_vocab_size: 14  # 0-9 (10) + PAD, BOS, EOS, UNK (4)
+vocab_size: null  # input/embedding vocab; base_vocab_size + task tokens + eventually other special tokens; computed dynamically in data.py; the possible tokens in the sequences fed to the model
+output_vocab_size: 12  # output/prediction vocab; 0-9 (10) + PAD (1) + EOS (1); the possible tokens that the model can predict 
+
+pad_token_id: 10
+bos_token_id: 11
+eos_token_id: 12
+unk_token_id: 13
+task_pad_token_id: null # computed dynamically in data.py; padding token id for the sequence of task tokens (if using task tokens); it is semantically different from the grid padding, so we give it a different ID
+
+# Dynamic dataset stats placeholders (computed at runtime)
+max_h: null # size of largest grid height across all tasks; this includes the padding tokens added to make the grid sizes match
+max_w: null # size of largest grid width across all tasks; this includes the padding tokens added to make the grid sizes match
+max_task_seq_len: null  # length of the longest task sequence embeddings (i.e., the sequence of task tokens that describe the task)
+max_seq_len: null # this will be computed as: max_task_seq_len + (max_h * max_w) + num_special_tokens (BOS, EOS, task tokens)
+
+# Dataset splits
+use_id_val: true
+use_ood_val: true
+use_id_test: true
+use_ood_test: true

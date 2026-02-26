@@ -1,0 +1,8 @@
+log_every_n_steps: 10
+log_grad_norm: true
+log_param_count: true
+log_samples_for_inspection: false
+visualize_data_samples: false
+visualize_model_predictions: true
+evolution_batch_idx: 0
+evolution_sample_indices: [0, 1, 2]

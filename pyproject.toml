@@ -1,0 +1,42 @@
+[project]
+name = "compgen-reasoning"
+version = "0.1.0"
+description = "Compositional Generalization Reasoning project @ETHZ, Switzerland, 2025, Klim Troyan."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch",
+    "torchvision",
+    "scikit-learn",
+    "scipy",
+    "numpy",
+    "Pillow",
+    "opencv-python",
+    "matplotlib",
+    "pandas",
+    "pytorch-lightning",
+    "PyYAML",
+    "tensorboard",
+    "tensorboardX",
+    "wandb",
+    "loguru",
+    "omegaconf",
+    "hydra-core",
+    "jupyter",
+    "ipykernel",
+    "seaborn>=0.13.2",
+    "datasets>=3.5.0",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu124" },
+]
+torchvision = [
+    { index = "pytorch-cu124" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true

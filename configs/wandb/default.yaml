@@ -1,0 +1,13 @@
+enabled: true
+entity_name: "klim-t"
+project_name: "compgen-reasoning-project"
+run_name: null  # e.g. devrun
+tags: []
+save_dir: ./wandb
+group: null
+log_model: false
+
+sweep:
+  enabled: false
+  config: configs/sweeps/sweep.yaml
+  num_jobs: -1  # -1 means let agent run all grid combinations
