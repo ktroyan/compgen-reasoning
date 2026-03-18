@@ -35,7 +35,7 @@ from utility.logging_utils import logger
 
 
 class EpochSummaryCallback(pl.Callback):
-    """Logs a clean, readable epoch summary via loguru at the end of each validation pass.
+    """Logs a clean, readable epoch summary at the end of each validation pass.
 
     This is especially useful in non-TTY environments (e.g. SLURM log files) where
     the PTL progress bar is disabled and no visual epoch summary is printed.
@@ -162,7 +162,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
     ## Learning Rate Monitor
     callbacks.append(LearningRateMonitor(logging_interval="epoch", log_momentum=True))
 
-    ## Clean epoch summary (essential for SLURM / non-TTY log files)
+    ## Clean epoch summary (useful for SLURM / non-TTY log files)
     callbacks.append(EpochSummaryCallback())
 
 
@@ -178,8 +178,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         "devices": cfg.training.get("devices", "auto"),
         "gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0),
         "check_val_every_n_epoch": cfg.training.get("check_val_every_n_epoch", 1),
-        # Disable the progress bar under SLURM (isatty() is unreliable there because
-        # srun can allocate a pseudo-terminal). SLURM_JOB_ID is always set for batch jobs.
+        # Disable the progress bar under SLURM. SLURM_JOB_ID is always set for batch jobs.
         "enable_progress_bar": cfg.logging.get("use_progress_bar", False) and "SLURM_JOB_ID" not in os.environ,
         "log_every_n_steps": cfg.logging.get("log_every_n_steps", 5),
         "deterministic": False
