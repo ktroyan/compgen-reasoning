@@ -1,0 +1,8 @@
+output_dim: ${model.d_model}
+ff_dim: 512
+num_layers: 6
+num_heads: 4
+attn_dropout: 0.1
+proj_dropout: 0.0
+ff_dropout: 0.1
+activation_func: "relu"

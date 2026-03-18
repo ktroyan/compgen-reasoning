@@ -1,0 +1,5 @@
+name: mlp_decoder
+output_dim: ${model.output_dim}
+hidden_dim: 128
+activation_func: "relu"
+dropout: 0.0

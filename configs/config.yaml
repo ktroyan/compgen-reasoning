@@ -6,7 +6,7 @@
 defaults:
   - _self_
   - experiment: default
-  - data: default
+  - data: cogitao_data
   - model: trm_model
   - network/encoder: trm_encoder
   - network/decoder: trm_decoder

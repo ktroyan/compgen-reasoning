@@ -1,6 +1,6 @@
 enabled: true
-entity_name: "klim-t"
-project_name: "compgen-reasoning-project"
+entity_name: "VisReas-ETHZ" # Personal workspace is: klim-t 
+project_name: "compgen-reasoning"
 run_name: null  # e.g. devrun
 tags: []
 save_dir: ./wandb

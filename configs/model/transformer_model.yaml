@@ -1,4 +1,4 @@
-name: "trm_model"
+name: "transformer_model"
 
 # --- Architecture Constraints (computed in the Data Module) ---
 max_h: ${data.max_h}  # one dimension of the grid, useful to calculate the grid size; e.g. for positional encoding and attention masking
@@ -29,18 +29,9 @@ ape:
   type: "learned"   # learned | 1d-sincos | 2d-sincos
   mixer: "sum"    # sum | learnable_scaling | weighted_sum | layer_norm | rms_norm
 
-rpe:
-  use_rpe: true
-  type: "2d-rope"  # 1d-rope, 2d-rope
-
-# Recursion
-N_sup: 16  # maximum number of recursive steps over the same sample during training
-trm_n: 6  # number of loops to updated the latent state within the latent recursion
-trm_T: 3  # number of refinement loops (T-1 without gradients and 1 with gradients)
 
 # Loss
-loss_func: "cross_entropy"  # "cross_entropy" | "stable_loss"; TODO: implement
-q_loss_weight: 0.5  # weight for the halting Q-node when calculating the total loss (cross-entropy loss + q_loss)
+loss_func: "cross_entropy"  # "cross_entropy"
 
 # --- Optimization ---
 optimizer: "adamw"  # "adamw" | "adam" | "sgd"
