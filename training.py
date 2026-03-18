@@ -18,6 +18,7 @@ TODO:
 """
 
 import os
+import sys
 import torch
 import wandb
 import pytorch_lightning as pl
@@ -32,9 +33,50 @@ from omegaconf import DictConfig
 # Custom Logger import
 from utility.logging_utils import logger
 
+
+class EpochSummaryCallback(pl.Callback):
+    """Logs a clean, readable epoch summary via loguru at the end of each validation pass.
+
+    This is especially useful in non-TTY environments (e.g. SLURM log files) where
+    the PTL progress bar is disabled and no visual epoch summary is printed.
+    """
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        if trainer.sanity_checking:
+            return
+
+        metrics = trainer.callback_metrics
+        train_m = {k: v for k, v in metrics.items() if k.startswith("train/")}
+        val_m   = {k: v for k, v in metrics.items() if k.startswith("val/")}
+
+        sep = "-" * 62
+        lines = [sep, f"  Epoch {trainer.current_epoch:>4d} Summary", sep]
+
+        def _fmt(v):
+            try:
+                return f"{float(v):.5f}"
+            except (TypeError, ValueError):
+                return str(v)
+
+        if train_m:
+            lines.append("  TRAIN")
+            for k in sorted(train_m):
+                lines.append(f"    {k:<38}  {_fmt(train_m[k])}")
+
+        if val_m:
+            lines.append("  VAL")
+            for k in sorted(val_m):
+                lines.append(f"    {k:<38}  {_fmt(val_m[k])}")
+
+        lines.append(sep)
+        logger.info("\n" + "\n".join(lines))
+
 # For flash / memory-efficient kernels when available (e.g., A100, RTX40xx, etc.), otherwise
 # use math kernels for older GPUs.
 torch.nn.attention.sdpa_kernel("auto")
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 
 def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.LightningDataModule):
 
@@ -118,7 +160,10 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         callbacks.append(EarlyStopping(monitor=monitor_metric, patience=patience, mode=monitor_metric_mode, verbose=True))
 
     ## Learning Rate Monitor
-    callbacks.append(LearningRateMonitor(logging_interval="step", log_momentum=True))
+    callbacks.append(LearningRateMonitor(logging_interval="epoch", log_momentum=True))
+
+    ## Clean epoch summary (essential for SLURM / non-TTY log files)
+    callbacks.append(EpochSummaryCallback())
 
 
     # ------------------------------------------------------------------
@@ -133,7 +178,10 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         "devices": cfg.training.get("devices", "auto"),
         "gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0),
         "check_val_every_n_epoch": cfg.training.get("check_val_every_n_epoch", 1),
-        "log_every_n_steps": cfg.training.get("log_every_n_steps", 5),
+        # Disable the progress bar under SLURM (isatty() is unreliable there because
+        # srun can allocate a pseudo-terminal). SLURM_JOB_ID is always set for batch jobs.
+        "enable_progress_bar": cfg.logging.get("use_progress_bar", False) and "SLURM_JOB_ID" not in os.environ,
+        "log_every_n_steps": cfg.logging.get("log_every_n_steps", 5),
         "deterministic": False
     }
     
@@ -154,14 +202,18 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
     if best_id_path and os.path.exists(best_id_path):
         logger.info(f"Loading best ID model from {best_id_path}")
         best_model = type(model).load_from_checkpoint(best_id_path, cfg=cfg, weights_only=False)
+        latest_model = model
     else:
         best_model = model
+        latest_model = model
+        logger.warning("Best ID checkpoint not found. Returning the latest model from training.")
 
     # Log best scores
-    if trainer.logger and isinstance(trainer.logger, WandbLogger):
+    wb_logger = next((lg for lg in trainer.loggers if isinstance(lg, WandbLogger)), None)
+    if wb_logger:
         if ckpt_callback_id.best_model_score:
             wandb.summary["best_id_score"] = ckpt_callback_id.best_model_score.item()
         if ckpt_callback_ood and ckpt_callback_ood.best_model_score:
             wandb.summary["best_ood_score"] = ckpt_callback_ood.best_model_score.item()
 
-    return best_model, checkpoints_dict
+    return best_model, latest_model, checkpoints_dict
