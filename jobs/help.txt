@@ -1,0 +1,23 @@
+--- Run a single experiment locally ---
+1) Run, for example: uv run main.py model.lr=0.0001 training.max_epochs=3
+
+
+--- Run a single experiment through SLURM ---
+1) run, for example: sbatch ./jobs/run_experiment.slurm model.lr=0.0001 training.max_epochs=3
+
+--- Run a WandB sweep through SLURM ---
+1) Select a sweep file in /configs/sweeps/<sweep_file>.yaml and run: wandb sweep /configs/sweeps/<sweep_file>.yaml
+   This prints something like: wandb agent <username>/<project>/<sweep_id>. This is the full sweep id.
+
+2) To launch one agent through one SLURM job, run: sbatch ./jobs/run_sweep.slurm <username>/<project>/<sweep_id>
+
+3) [Optional] To launch one more agent, we just repeat the previous command: sbatch ./jobs/run_sweep.slurm <username>/<project>/<sweep_id>
+
+
+###############################
+--- Run a dataset generation ---
+Run:
+sbatch create_dataset.SLURM
+
+Or run with the agrgument --upload to upload it to HuggingFace directly:
+sbatch create_dataset.slurm --upload
