@@ -102,7 +102,6 @@ class GridDataset(Dataset):
         self.task_pad_token_id = task_pad_token_id
         self.use_task_tokens = use_task_tokens
 
-        # Update the config
 
     def __len__(self):
         return len(self.data)
@@ -188,7 +187,7 @@ class GridDataset(Dataset):
         src_flat = src_padded_2d.flatten().tolist()
         tgt_flat = tgt_padded_2d.flatten().tolist()
 
-        # Encode WITHOUT adding BOS/EOS
+        # Tokenize WITHOUT adding BOS/EOS
         src_grid_tokens = []
         for val in src_flat:
             if 0 <= val <= 9:
@@ -232,7 +231,8 @@ class GridDataset(Dataset):
         # Build final encoder sequence
         # -------------------------
         # Structure:
-        # [BOS] + task_tokens + grid_tokens + [EOS]
+        # - Input: [BOS] (+ task_tokens) + grid_tokens + [EOS]
+        # - Target: grid_tokens + [EOS]
 
         if self.use_task_tokens:
             # If using task tokens, we can keep task tokens in the sequence, let the model learn embeddings for them and how to use them (e.g., for OOD generalization). 
@@ -266,6 +266,9 @@ class GridDataset(Dataset):
 class GridDataModule(pl.LightningDataModule):
     def __init__(self, cfg):
         super().__init__()
+
+        logger.info("Instantiating Data Module (GridDataModule)...")
+
         self.cfg = cfg
         self.data_source = cfg.data.get("data_source", None).lower()
         self.data_path = cfg.data.get("data_path", "")

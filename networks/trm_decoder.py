@@ -42,14 +42,21 @@ class TRMDecoder(nn.Module):
             raise ValueError(f"Activation function '{activation_fn}' not recognized. Choose from ['relu', 'gelu', 'leaky_relu']")
 
         # MLP
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(self.d_model, hidden_dim),
+        #     activation_layer,
+        #     nn.Dropout(dropout_p),
+        #     nn.Linear(hidden_dim, hidden_dim),
+        #     activation_layer,
+        #     nn.Dropout(dropout_p),
+        #     nn.Linear(hidden_dim, self.output_dim)
+        # )
+
         self.mlp = nn.Sequential(
             nn.Linear(self.d_model, hidden_dim),
             activation_layer,
             nn.Dropout(dropout_p),
-            nn.Linear(hidden_dim, hidden_dim),
-            activation_layer,
-            nn.Dropout(dropout_p),
-            nn.Linear(hidden_dim, self.output_dim)
+            nn.Linear(hidden_dim, self.output_dim),
         )
     
     def forward(self, x, tgt=None, memory_key_padding_mask=None):

@@ -1,16 +1,16 @@
 """
-models.trm_model
+models.transformer_model
 
 TODO:
-1) Create a ModelModule class that inherits from pl.LightningModule and a TRMModel class that inherits from ModelModule in order to have a model module that
+1) Create a ModelModule class that inherits from pl.LightningModule and a TransformerModel class that inherits from ModelModule in order to have a model module that
    can be used with PTL Trainer in training.py and inference.py.
 
-2) The TRMModel should consist of an encoder and decoder, which are implemented as separate classes
-   in the /networks folder (e.g., trm_encoder.py and trm_decoder.py) and which together form the full TRM model.
+2) The TransformerModel should consist of an encoder and decoder, which are implemented as separate classes
+   in the /networks folder (e.g., transformer_encoder.py and transformer_decoder.py) and which together form the full Transformer model.
    That is, input data from the dataloader are fed into the encoder, and the output of the encoder is fed into
    the decoder to produce the final predictions for the problem (e.g., if the data module is "GridDataModule" then it is for grid prediction).
 
-3) The forward method of TRMModel should define the forward pass through the encoder and decoder.
+3) The forward method of TransformerModel should define the forward pass through the encoder and decoder.
 
 4) The training_step, validation_step, and test_step methods should compute the relevant losses and metrics and log them.
 
@@ -21,15 +21,14 @@ TODO:
 import os
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
 from omegaconf import DictConfig, OmegaConf
 from typing import Optional, Dict
 import json
 
 from utility.logging_utils import logger
-from networks.trm_encoder import TRMEncoder
-from networks.trm_decoder import TRMDecoder
+from networks.transformer_encoder import TransformerEncoder
+from networks.mlp_decoder import MLPDecoder
 
 from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics
 
@@ -39,7 +38,7 @@ class ModelModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.cfg = cfg
-
+    
     def compute_metrics(self, preds: torch.Tensor, targets: torch.Tensor) -> Dict[str, torch.Tensor]:
         
         # Element-wise correctness
@@ -72,7 +71,7 @@ class ModelModule(pl.LightningModule):
             return str(self.trainer.datamodule.tokenizer.decode(ids))
         return str(token_ids.detach().cpu().tolist())
 
-class TRMModel(ModelModule):
+class TransformerModel(ModelModule):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
@@ -97,19 +96,21 @@ class TRMModel(ModelModule):
         # Metric Tracking
         self.epoch_metrics =[]
 
-        logger.info(f"Initializing TRM (Encoder + MLP Decoder) with d_model={self.d_model}")
-        self.encoder = TRMEncoder(cfg)
-        self.decoder = TRMDecoder(cfg)
+        logger.info(f"Initializing Transformer (Encoder + MLP Decoder) with d_model={self.d_model}")
+        self.encoder = TransformerEncoder(cfg)
+        self.decoder = MLPDecoder(cfg)
 
         # --- Loss Function ---
 
         # Weights for class token imbalance
-        # self.num_classes = self.vocab_size
-        # loss_weights = torch.ones(self.num_classes)
-        # loss_weights[1:10] = 5.0 
-        # self.register_buffer("loss_weights", loss_weights)  # register to handle device transfer
+        num_classes = self.vocab_size
+        loss_weights = torch.ones(num_classes)
+        loss_weights[1:10] = 5.0 
+        
+        self.register_buffer("loss_weights", loss_weights)  # register to handle device transfer
 
-        # self.loss_fn = nn.CrossEntropyLoss()
+        # TODO: should we ignore padding tokens? should we balance tokens?
+        self.loss_fn = nn.CrossEntropyLoss()
         # self.loss_fn = nn.CrossEntropyLoss(weight=self.loss_weights, ignore_index=self.cfg.data.pad_token_id)
         # self.loss_fn = nn.CrossEntropyLoss(weight=self.loss_weights, ignore_index=0)
         # self.loss_fn = nn.CrossEntropyLoss(ignore_index=self.cfg.data.pad_token_id)
@@ -118,17 +119,9 @@ class TRMModel(ModelModule):
         self.epoch_samples = {}
         self.test_outputs = []
 
-        # --- TRM specifics ---
-        # Instantiate and initialize the Q-head used to decide when halting recursion
-        self.q_head = nn.Linear(self.encoder.d_model, 1)
-    
-
     def forward_features_for_MLP_decoder(self, x: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
         """
-        Output relevant feature embeddings of the encoded sequence x.
-        Essentially, the grid token embeddings.
-
-        For TRM, this is in fact the proposed answer y by the encoder with iterative refinement.
+        Output relevant feature embeddings of the encoded sequence x
         """
         # The encoder's output contains embeddings for grid tokens, but also for special tokens such as <BOS>, <EOS>, and task tokens.
         # Since an MLP decodes in parallel for each position, we only want to keep the embeddings corresponding to the grid tokens.
@@ -148,50 +141,33 @@ class TRMModel(ModelModule):
         
         return x[:, start_idx:end_idx, :]
     
-    def forward(self, 
-                x: torch.Tensor, 
-                tgt: Optional[torch.Tensor],
-                y: Optional[torch.Tensor] = None,
-                z: Optional[torch.Tensor] = None,
-                task_tokens: Optional[torch.Tensor] = None
-                ) -> torch.Tensor:
+    def forward(self, src: torch.Tensor, tgt: Optional[torch.Tensor] = None, task_tokens: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass: Encoder -> Decoder -> Logits
-
-        Args:
-            x: input sequence of token IDs; [B, S], where is S_grid + num_special_tokens (e.g., <BOS>, <EOS>, task tokens, etc.)
-            tgt: target sequence of token IDs [B, S_grid + 1] (including <EOS> token at the end); only used for MLP decoder to determine which encoder output embeddings to use
-            y: carry state for the answer (initialized as a copy of x for the first outer step)
-            z: carry state for the latent state (initialized as zeros for the first outer step)
-            task_tokens: optional task tokens to condition on (if using task tokens, they are included in the input sequence x from when the data is loaded in cogitao_data.py)
-
-        Returns:
-            logits: output logits from the decoder [B, S_grid, output_vocab_size]
-            q_logits: output logits from the Q-head for halting decision [B, 1]
-            y_next: next carry state for the answer (detached from the computation graph for the next outer step)
-            z_next: next carry state for the latent state (detached from the computation graph for the next outer step)
-        
         """
 
-        # Compute the encoder output y and the next carry states for recursion (which are detached from the computation graph to prevent gradients from flowing back through them in the next outer step)
-        y_grad, y_next, z_next = self.encoder(
-            x,  # [B, S]
-            y=y,    # [B, S]
-            z=z # None or [B, S, d_model]
-        )
+        encoder_output = self.encoder(src)
 
-        # TODO: see if should use full grid OR full grid + input sequence OR just one token (e.g., <EOS> token)
-        # NOTE: we pad the 2D grids, so the there is no padding needed for the sequence and thus the <EOS> token is always at the end
-        q_logits = self.q_head(y_grad[:, -1])  # use EOS token embedding to decide when to halt recursion; q_logits is of shape [B, 1]
+        # TODO: we can do something with task_tokens to build a task-aware model for OOD generalization
+        # Note that the task_tokens are already included in the src sequence fed to the encoder if the config parameter use_task_tokens is set to true
+        # Then, src is [BOS, task_tokens..., grid_tokens..., EOS]
 
-        # For MLP decoder, we only want to use the encoded grid tokens' embeddings, and not the embeddings of the special tokens such as BOS and EOS
-        # This is because the MLP decoder decodes in parallel for each position and thus the input sequence to the MLP decoder should be the same length as the target sequence (which is [<grid_tokens>, <EOS>] and for which we will discard the <EOS> token when computing the loss)
-        y_grad = self.forward_features_for_MLP_decoder(y_grad, tgt) # [B, S_grid, d_model] <- [B, S, d_model]
+        # --- MLP Decoder ---
+        if self.cfg.network.decoder.get("name", None) in ["mlp_decoder"]:
+            encoder_output = self.forward_features_for_MLP_decoder(encoder_output, tgt)
+            logits = self.decoder(encoder_output)   # logits should be of shape [B, S_grid, output_dim] where S_grid is the number of grid tokens in the target sequence
 
-        logits = self.decoder(y_grad)   # logits should be of shape [B, S_grid, output_dim] where S_grid is the number of grid tokens in the target sequence
+        # --- AR Decoder ---
+        elif self.cfg.network.decoder.get("name", None) == "ar_decoder":
+            # No special handling needed for AR decoder (it happens in the AR decoder directly since the encoded sequence is used as memory)
+            logits = self.decoder(encoder_output, tgt)  # logits should be of shape [B, S_grid, output_dim] where S_grid is the number of grid tokens in the target sequence
+            
+        else:
+            raise ValueError(f"Unknown decoder name: {self.cfg.network.decoder.get('name', None)}")
 
-        return logits, q_logits, y_next, z_next
 
+        return logits   # [B, S_grid, output_dim=output_vocab_size]
+            
 
     # ------------------------------------------------------------------
     # Lifecycle Hooks
@@ -211,96 +187,31 @@ class TRMModel(ModelModule):
     # Training
     # ------------------------------------------------------------------
     def training_step(self, batch, batch_idx):
-        """
-        TODO: see how to make more efficient the three different recursive loops
-        """
+        src, tgt, task_tokens = batch
         
-        src, tgt, task_tokens = batch   # src: [B, S], tgt: [B, S_grid + 1] (including <EOS> token at the end), task_tokens: [B, num_task_tokens] or None
+        logits = self(src, tgt, task_tokens=task_tokens)
+
+        # Get predictions from logits: [B, S_grid] <-- [B, S_grid, output_vocab_size]
+        preds = torch.argmax(logits, dim=-1)    # [B, S_grid]; get predicted discrete tokens
 
         # Remove the <EOS> token from the target sequence for loss computation since we do not want to predict anything for that position in the target sequence (we will ignore it when computing the loss)
         # NOTE: the <EOS> is useful and included in the target sequence for the decoder's forward pass since it allows an AR decoder to know where the end of the grid tokens is in the target sequence
         # For AR decoder, we should consider the <EOS> token when computing the loss
-        # Remove EOS from target
-        tgt_grid = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
+        if self.cfg.network.decoder.get("name", None) in ["mlp_decoder"]:
+            # Remove EOS from target
+            tgt = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
 
-        B = src.size(0)
-
-        y = None  # we let the encoder initialize the carry state for the answer as a copy of the input sequence embeddings
-        z = None  # we let encoder initialize the carry state for the latent state
-
-        halted = torch.zeros(B, dtype=torch.bool, device=src.device)
-
-        total_loss = 0.0
-        final_preds = None
-
-        for _ in range(self.cfg.model.get("N_sup", 16)):
-
-            logits, q_logits, y_next, z_next = self(src, tgt_grid, y, z, task_tokens=task_tokens)
-
-            preds = torch.argmax(logits, dim=-1)    # [B, S_grid]; get predicted discrete tokens
-
-            with torch.no_grad():
-                seq_correct = (preds == tgt_grid).all(dim=-1)    # [B]; check if the entire sequence is correct for each sample in the batch
-
-            # Cross-entropy per sample
-            ce_loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                tgt_grid.reshape(-1),
-                reduction="none"
-            ).view(B, -1).mean(dim=1)  # [B]
-
-            # Q-loss per sample
-            q_loss = F.binary_cross_entropy_with_logits(
-                q_logits.squeeze(-1),
-                seq_correct.float(),
-                reduction="none"
-            )  # [B]
-
-            loss_per_sample = ce_loss + self.cfg.model.get("q_loss_weight", 1.0) * q_loss
-
-            # Only accumulate loss for active samples
-            # Accumulating the loss across all recursive steps is called Deep Supervision. We only do it for training
-            active_mask = ~halted
-            total_loss += (loss_per_sample * active_mask.float()).mean()
-
-            # Update halting state
-            newly_halted = (q_logits.squeeze(-1) > 0)
-            halted = halted | newly_halted
-            halted_mask = halted.view(B, 1, 1)  # [B, 1, 1] to broadcast over S and D
-
-            # Update states only for active samples
-            if y is None:
-                y = y_next
-
-            else:
-                y = torch.where(
-                    halted_mask,  # broadcast along seq_len and embedding dims
-                    y,
-                    y_next
-                )
-
-            if z is None:
-                z = z_next
-
-            else:
-                z = torch.where(
-                    halted_mask,  # broadcast along seq_len and embedding dims
-                    z,
-                    z_next
-                )
-
-            final_preds = preds
-
-            # If all samples in the batch halted, stop loop
-            if halted.all():
-                break
-
+        # Compute loss
+        # NOTE: CrossEntropyLoss expects unnormalized logits since it computes the log-softmax and use the NLLLoss.
+        #       So input of shape [B, C, S] where C is the size of the logits (i.e., number of classes (output vocab size)) and target of shape [B, S]
+        # loss = self.loss_fn(logits.transpose(1, 2), tgt)
+        loss = self.loss_fn(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))  # alternative equivalent reshaping for CrossEntropyLoss
 
         # Compute metrics
-        metrics = self.compute_metrics(final_preds, tgt_grid)
+        metrics = self.compute_metrics(preds, tgt)
 
         # Log metrics (on_step=True allows seeing fluctuations during epoch)
-        self.log("train/loss", total_loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/acc", metrics["acc"], on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/grid_acc", metrics["grid_acc"], on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/acc_no_pad", metrics["acc_no_pad"], on_step=True, on_epoch=True, prog_bar=True)
@@ -310,18 +221,18 @@ class TRMModel(ModelModule):
             self.epoch_samples["train"] = {"first": None, "last": None}
         
         if self.log_samples_flag and batch_idx == 0:
-            self.epoch_samples["train"]["first"] = (src[0], tgt_grid[0], final_preds[0])
-            self.epoch_samples["train"]["last"] = (src[-1], tgt_grid[-1], final_preds[-1])
+            self.epoch_samples["train"]["first"] = (src[0], tgt[0], preds[0])
+            self.epoch_samples["train"]["last"] = (src[-1], tgt[-1], preds[-1])
         # Track sample prediction evolution
         if batch_idx == self.evol_batch_idx:
-            record = _extract_evolution_samples(self, src, tgt_grid, final_preds)
+            record = _extract_evolution_samples(self, src, tgt, preds)
             if record:
                 self.evolution_records["train"].append({
                     "epoch": self.current_epoch,
                     "samples": record
                 })
 
-        return total_loss
+        return loss
 
     # ------------------------------------------------------------------
     # Validation
@@ -329,65 +240,20 @@ class TRMModel(ModelModule):
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         src, tgt, task_tokens = batch
         
-        # For validation, we only care about the grid tokens in the target sequence (i.e., we do not include the <EOS> token in the target)
-        tgt_grid = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
-
-        B = src.size(0)
-
-        y = None  # we let the encoder initialize the carry state for the answer as a copy of the input sequence embeddings
-        z = None  # we let encoder initialize the carry state for the latent state
-
-        halted = torch.zeros(B, dtype=torch.bool, device=src.device)
-
-        with torch.no_grad():
-
-            for _ in range(self.cfg.model.N_sup):
-
-                logits, q_logits, y_next, z_next = self(
-                    src, tgt_grid, y, z, task_tokens=task_tokens
-                )
-
-                newly_halted = (q_logits.squeeze(-1) > 0)
-                halted = halted | newly_halted
-                halted_mask = halted.view(B, 1, 1)  # [B, 1, 1] to broadcast over S and D
-
-                # Update states only for active samples
-                if y is None:
-                    y = y_next
-
-                else:
-                    y = torch.where(
-                        halted_mask,  # broadcast along seq_len and embedding dims
-                        y,
-                        y_next
-                    )
-
-                if z is None:
-                    z = z_next
-
-                else:
-                    z = torch.where(
-                        halted_mask,  # broadcast along seq_len and embedding dims
-                        z,
-                        z_next
-                    )
-
-                    if halted.all():
-                        break
-
-                if halted.all():
-                    break
-
-        # loss = self.loss_fn(logits.transpose(1, 2), tgt_grid)
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            tgt_grid.reshape(-1),
-            reduction="mean"
-        )
+        logits = self(src, tgt, task_tokens=task_tokens)
 
         preds = torch.argmax(logits, dim=-1)
+
+        # Remove the <EOS> token from the target sequence for loss computation since we do not want to predict anything for that position in the target sequence (we will ignore it when computing the loss)
+        # NOTE: the <EOS> is useful and included in the target sequence for the decoder's forward pass since it allows an AR decoder to know where the end of the grid tokens is in the target sequence
+        # For AR decoder, we should consider the <EOS> token when computing the loss
+        if self.cfg.network.decoder.get("name", None) in ["mlp_decoder"]:
+            # Remove EOS from target
+            tgt = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
+
+        loss = self.loss_fn(logits.transpose(1, 2), tgt)
         
-        metrics = self.compute_metrics(preds, tgt_grid)
+        metrics = self.compute_metrics(preds, tgt)
         
         # Determine prefix based on dataloader index
         # 0 -> ID, 1 -> OOD (assuming DataModule returns [id_loader, ood_loader])
@@ -405,12 +271,12 @@ class TRMModel(ModelModule):
             self.epoch_samples[key] = {"first": None, "last": None}
 
         if self.log_samples_flag and batch_idx == 0:
-            self.epoch_samples[key]["first"] = (src[0], tgt_grid[0], preds[0])
-            self.epoch_samples[key]["last"] = (src[-1], tgt_grid[-1], preds[-1])
+            self.epoch_samples[key]["first"] = (src[0], tgt[0], preds[0])
+            self.epoch_samples[key]["last"] = (src[-1], tgt[-1], preds[-1])
 
         # Track Evolution
         if batch_idx == self.evol_batch_idx:
-            record = _extract_evolution_samples(self, src, tgt_grid, preds)
+            record = _extract_evolution_samples(self, src, tgt, preds)
             if record:
                 self.evolution_records[key].append({
                     "epoch": self.current_epoch,
@@ -494,62 +360,20 @@ class TRMModel(ModelModule):
     def test_step(self, batch, batch_idx, dataloader_idx=0):
         src, tgt, task_tokens = batch
 
-        # For testing, we only care about the grid tokens in the target sequence (i.e., we do not include the <EOS> token in the target)
-        tgt_grid = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
-
-        B = src.size(0)
-
-        y = None  # we let the encoder initialize the carry state for the answer as a copy of the input sequence embeddings
-        z = None  # we let encoder initialize the carry state for the latent state
-
-        halted = torch.zeros(B, dtype=torch.bool, device=src.device)
-
-        with torch.no_grad():
-
-            for _ in range(self.cfg.model.N_sup):
-
-                logits, q_logits, y_next, z_next = self(
-                    src, tgt_grid, y, z, task_tokens=task_tokens
-                )
-
-                newly_halted = (q_logits.squeeze(-1) > 0)
-                halted = halted | newly_halted
-                halted_mask = halted.view(B, 1, 1)  # [B, 1, 1] to broadcast over S and D
-
-                # Update states only for active samples
-                if y is None:
-                    y = y_next
-
-                else:
-                    y = torch.where(
-                        halted_mask,  # broadcast along seq_len and embedding dims
-                        y,
-                        y_next
-                    )
-
-                if z is None:
-                    z = z_next
-
-                else:
-                    z = torch.where(
-                        halted_mask,  # broadcast along seq_len and embedding dims
-                        z,
-                        z_next
-                    )
-
-                    if halted.all():
-                        break
-
-        # loss = self.loss_fn(logits.transpose(1, 2), tgt_grid)
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            tgt_grid.reshape(-1),
-            reduction="mean"
-        )
+        logits = self(src, tgt, task_tokens=task_tokens)
 
         preds = torch.argmax(logits, dim=-1)
 
-        metrics = self.compute_metrics(preds, tgt_grid)
+        # Remove the <EOS> token from the target sequence for loss computation since we do not want to predict anything for that position in the target sequence (we will ignore it when computing the loss)
+        # NOTE: the <EOS> is useful and included in the target sequence for the decoder's forward pass since it allows an AR decoder to know where the end of the grid tokens is in the target sequence
+        # For AR decoder, we should consider the <EOS> token when computing the loss
+        if self.cfg.network.decoder.get("name", None) in ["mlp_decoder"]:
+            # Remove EOS from target
+            tgt = tgt[:, :-1]  # [B, S_grid] <-- [B, S_grid + 1]
+
+        loss = self.loss_fn(logits.transpose(1, 2), tgt)
+
+        metrics = self.compute_metrics(preds, tgt)
         
         prefix = "id" if dataloader_idx == 0 else "ood"
         
@@ -646,7 +470,7 @@ class TRMModel(ModelModule):
             optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.model.lr, weight_decay=self.cfg.model.weight_decay)
         
         elif self.cfg.model.optimizer == 'adamw':
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.model.lr, weight_decay=self.cfg.model.weight_decay, betas=(0.9, 0.95)) # betas are as per the TRM paper
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.model.lr, weight_decay=self.cfg.model.weight_decay)
         
         elif self.cfg.model.optimizer == 'sgd':
             optimizer = torch.optim.SGD(self.parameters(), lr=self.cfg.model.lr, momentum=0.9, weight_decay=self.cfg.model.weight_decay)
@@ -678,3 +502,34 @@ class TRMModel(ModelModule):
         }
 
         return optimizer_config
+
+
+
+    # def configure_optimizers(self):
+    #     lr = self.cfg.model.get("lr", 1e-4)
+    #     weight_decay = self.cfg.model.get("weight_decay", 1e-5)
+        
+    #     optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=weight_decay)
+        
+    #     total_steps = self.trainer.estimated_stepping_batches
+    #     warmup_steps = 200 
+        
+    #     pct_start = 0.1
+    #     if total_steps > 0:
+    #         pct_start = min(0.5, warmup_steps / total_steps)
+
+    #     scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    #         optimizer, 
+    #         max_lr=lr, 
+    #         total_steps=total_steps,
+    #         pct_start=pct_start, 
+    #         anneal_strategy='cos'
+    #     )
+        
+    #     return {
+    #         "optimizer": optimizer,
+    #         "lr_scheduler": {
+    #             "scheduler": scheduler,
+    #             "interval": "step"
+    #         }
+    #     }
