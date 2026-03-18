@@ -19,32 +19,36 @@ TODO:
 """
 
 import os
-import logging
 import hydra
 import wandb
 import torch
 from typing import Type
-from omegaconf import OmegaConf, DictConfig, open_dict
+from omegaconf import OmegaConf, DictConfig
 from hydra.utils import get_original_cwd
-from hydra.core.hydra_config import HydraConfig 
 
 ## Personal imports
-# Importing the run functions
+# Training and Inference entry points
 from training import run_training
 from inference import run_inference
 
-# Importing DataModule
-from data.data import GridDataModule  
+# WandB utilities
+from utility.wandb_utils import setup_wandb
 
-# Importing Models
+# Data
+from data.cogitao_data import GridDataModule  
+
+# Models
 from models.transformer_model import TransformerModel
 from models.trm_model import TRMModel
 
-# Importing Utilities
-from utility.visualization_utils import visualize_data_samples
+# Utilities
+from utility.visualization_utils import visualize_datamodule_samples
 
 # Setup Logger
-logger = logging.getLogger(__name__)
+from utility.logging_utils import logger
+
+# Set PyTorch matmul precision to medium for better performance vs. precision
+torch.set_float32_matmul_precision("medium")
 
 # Map config strings to actual Model classes
 MODEL_MAP = {
@@ -56,13 +60,12 @@ MODEL_MAP = {
 def main(cfg: DictConfig):
 
     # ------------------------------------------------------------------
-    # 0) Setup Output Directories
+    # 0) Setup output folder
     # ------------------------------------------------------------------
     # Hydra has already loaded Defaults and applied CLI overrides into 'cfg'.
-    # Hydra changes CWD to the run dir. We can also get it explicitly.
-    # Because 'hydra.job.chdir: True', os.getcwd() IS the timestamped folder.
-    run_dir = os.getcwd()
-    orig_cwd = get_original_cwd()
+    # Hydra changes CWD to the run dir for this run
+    run_dir = os.getcwd()   # get the timestamped run directory created by Hydra for this run
+    orig_cwd = get_original_cwd()   # get the original working directory (where the code and configs are located, before Hydra changes it)
     
     logger.info(f"Run Directory (Output): {run_dir}")
     logger.info(f"Original Directory: {orig_cwd}")
@@ -73,38 +76,7 @@ def main(cfg: DictConfig):
     use_wandb = cfg.get("wandb", {}).get("enabled", False)    # check if WandB is enabled in the config
     
     if use_wandb:
-        # Initialize WandB
-        # If this is part of a Sweep, WandB automatically picks up the sweep config
-        # and ignores the 'config' argument passed here for those specific keys.
-        wandb.init(
-            project=cfg.wandb.get("project_name", "compgen-reasoning-project"),
-            entity=cfg.wandb.get("entity_name", None),
-            group=cfg.wandb.get("group", None),
-            name=cfg.wandb.get("run_name", None),
-            dir=run_dir,
-            config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)    # pass the full Hydra config as an initial state
-        )
-    
-        # (ii) Update Hydra config with WandB Sweep values
-        # If a sweep is running, wandb.config contains the hyperparams chosen by the agent.
-        # We overlay these onto the Hydra config so the rest of the code uses the sweep values.
-        if wandb.config:
-            logger.info("Updating config with WandB Sweep parameters...")
-            with open_dict(cfg):
-                for key, value in wandb.config.items():
-                    # Handle nested keys if WandB uses dot notation (e.g. "model.n_layers")
-                    if "." in key:
-                        parts = key.split(".")
-                        sub_conf = cfg
-                        for part in parts[:-1]:
-                            # Create nested dict if it doesn't exist
-                            if part not in sub_conf:
-                                sub_conf[part] = {}
-                            sub_conf = sub_conf[part]
-                        sub_conf[parts[-1]] = value
-                    else:
-                        # Top level keys
-                        cfg[key] = value
+        cfg = setup_wandb(cfg, run_dir)
 
     # Log the final resolved config
     logger.info(f"Final Experiment Configuration:\n{OmegaConf.to_yaml(cfg)}")
@@ -114,9 +86,11 @@ def main(cfg: DictConfig):
     # ------------------------------------------------------------------
 
     orig_cwd = get_original_cwd()
-    logger.info("Instantiating Data Module (GridDataModule)...")
-    
-    dm = GridDataModule(cfg=cfg)
+
+    if cfg.data.name == "cogitao_data":
+        dm = GridDataModule(cfg=cfg)
+    else:
+        raise ValueError(f"DataModule '{cfg.data}' not recognized. Please check the config defaults and ensure the corresponding DataModule is implemented and imported in main.py.")
 
     # Just a sanity check to ensure the DataModule can be set up without errors before proceeding to visualization and training
     try:
@@ -126,55 +100,7 @@ def main(cfg: DictConfig):
         raise e
 
     ## 3.1 Visualize some samples from the dataset for sanity checking
-    if cfg.get("logging", {}).get("visualize_data_samples", False):
-        logger.info("Generating data sample visualizations...")
-        
-        try:
-            # Ensure setup is called (loads data into the DM)
-            dm.setup(stage="fit")
-            dm.setup(stage="test") 
-            
-            indices_to_check = [0, 1, 2] # Visualize first 3 samples
-
-            # Helper function to handle Single vs List of Dataloaders
-            def safe_visualize(loaders, phase_name):
-                # If it's a single dataloader, we wrap it in a list for consistent processing
-                if not isinstance(loaders, list):
-                    loaders = [loaders]
-                
-                for i, loader in enumerate(loaders):
-                    # Determine a suffix. 
-                    # Convention in DataModule: 0=ID, 1=OOD
-                    if len(loaders) > 1:
-                        suffix = "ID" if i == 0 else "OOD"
-                        filename = f"vis_{phase_name}_{i}_{suffix}.png"
-                    else:
-                        filename = f"vis_{phase_name}.png"
-                    
-                    # Check if loader is valid (might be None in some configs)
-                    if loader is not None:
-                        full_path = os.path.join(os.getcwd(), filename)
-                        logger.info(f"Visualizing {phase_name} (Loader {i}) to {filename}")
-                        visualize_data_samples(loader, indices_to_check, save_path=full_path)
-                        
-                        # Optional: Log to WandB
-                        if wandb.run:
-                            wandb.log({f"vis_{phase_name}_{i}": wandb.Image(full_path)})
-
-            # Visualize Train
-            safe_visualize(dm.train_dataloader(), "train")
-
-            # Visualize Validation (Handles ID & OOD)
-            safe_visualize(dm.val_dataloader(), "val")
-
-            # Visualize Test (Handles ID & OOD)
-            safe_visualize(dm.test_dataloader(), "test")
-
-        except Exception as e:
-            logger.warning(f"Could not visualize samples: {e}")
-            # Print stack trace for debugging if needed
-            import traceback
-            traceback.print_exc()
+    visualize_datamodule_samples(dm, cfg)
 
     # ------------------------------------------------------------------
     # 4) Instantiate Model module
@@ -206,16 +132,22 @@ def main(cfg: DictConfig):
     do_train = cfg.get("experiment", {}).get("run_training", False)
     do_inference = cfg.get("experiment", {}).get("run_inference", False)
 
+    if do_inference and not do_train:
+        if not cfg.inference.get("checkpoint_path", None):
+            raise ValueError(
+                "Running inference without training requires 'inference.checkpoint_path' to be set in config."
+            )
+
     if do_train:
         logger.info("--- Starting Training Phase ---")
-        run_training(cfg, model, dm)
+        # NOTE: model is modified in-place by the training function to be the last training step model
+        #       So the run_training() function returns the best model (w.r.t. the model selection criterion)
+        model, _latest_model, _ckpt_dict = run_training(cfg, model, dm)
     else:
         logger.info("Skipping Training (cfg.experiment.run_training is False)")
 
     if do_inference:
         logger.info("--- Starting Inference Phase ---")
-        # Note: If training just finished, the model object already contains the trained weights.
-        # If running inference-only, the run_inference function should handle checkpoint loading.
         run_inference(cfg, model, dm)
     else:
         logger.info("Skipping Inference (cfg.experiment.run_inference is False)")
@@ -231,9 +163,6 @@ def main(cfg: DictConfig):
     if use_wandb and wandb.run:
         # Sync the config file from the local Hydra output directory to WandB cloud
         wandb.save("final_config.yaml")
-        
-        # WandB automatically captures stdout/stderr. 
-        # Checkpoints are usually handled by PTL ModelCheckpoint callback (logged to wandb if configured).
         wandb.finish()
         logger.info("WandB run finished.")
 
