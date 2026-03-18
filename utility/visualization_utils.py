@@ -3,11 +3,16 @@ utility/visualization_utils.py
 
 """
 
+import os
+import traceback
 import torch
+import wandb
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors
 from torch.utils.data import DataLoader
+
+from utility.logging_utils import logger
 
 def get_arc_colormap():
     """
@@ -167,3 +172,45 @@ def visualize_data_samples(dataloader: DataLoader, indices: list[int], save_path
         plt.show()
     
     plt.close()
+
+
+def visualize_datamodule_samples(dm, cfg, indices: list[int] = None):
+    """
+    Visualize samples from train/val/test dataloaders of a DataModule and
+    optionally log them to WandB.
+    """
+    if not cfg.get("logging", {}).get("visualize_data_samples", False):
+        return
+
+    if indices is None:
+        indices = [0, 1, 2]
+
+    logger.info("Generating data sample visualizations...")
+
+    try:
+        dm.setup(stage="fit")
+        dm.setup(stage="test")
+
+        def _safe_visualize(loaders, phase_name):
+            if not isinstance(loaders, list):
+                loaders = [loaders]
+            for i, loader in enumerate(loaders):
+                if len(loaders) > 1:
+                    suffix = "ID" if i == 0 else "OOD"
+                    filename = f"vis_{phase_name}_{i}_{suffix}.png"
+                else:
+                    filename = f"vis_{phase_name}.png"
+                if loader is not None:
+                    full_path = os.path.join(os.getcwd(), filename)
+                    logger.info(f"Visualizing {phase_name} (Loader {i}) to {filename}")
+                    visualize_data_samples(loader, indices, save_path=full_path)
+                    if wandb.run:
+                        wandb.log({f"vis_{phase_name}_{i}": wandb.Image(full_path)})
+
+        _safe_visualize(dm.train_dataloader(), "train")
+        _safe_visualize(dm.val_dataloader(), "val")
+        _safe_visualize(dm.test_dataloader(), "test")
+
+    except Exception as e:
+        logger.warning(f"Could not visualize samples: {e}")
+        traceback.print_exc()
