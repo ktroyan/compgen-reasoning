@@ -1,4 +1,4 @@
 name: "default_experiment"
 run_training: true
 run_inference: true
-checkpoint_path: null
+checkpoint_path: null # path to model checkpoint to load for training and/or inference; if null, will start training from scratch and use the best checkpoint from training for inference

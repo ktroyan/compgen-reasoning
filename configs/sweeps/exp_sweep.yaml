@@ -1,0 +1,31 @@
+program: main.py
+command:
+  - uv
+  - run
+  - ${program}
+  - ${args_no_hyphens}
+  - model.N_sup=4
+  - model.trm_n=3
+  - data.use_ood_val=false
+  - data.use_ood_test=false
+
+method: grid
+
+metric:
+  name: val/id_loss
+  goal: minimize
+
+parameters:
+
+  data.data_path:
+    values:
+      - "hf://datasets/yassinetb/COGITAO/supplementary/Sample_Efficiency/exp_setting_1/experiment_1"
+      - "hf://datasets/yassinetb/COGITAO/supplementary/Sample_Efficiency/exp_setting_2/experiment_1"
+      - "hf://datasets/yassinetb/COGITAO/supplementary/Sample_Efficiency/exp_setting_3/experiment_1"
+      - "hf://datasets/yassinetb/COGITAO/supplementary/Sample_Efficiency/exp_setting_4/experiment_1"
+
+  training.max_epochs:
+    values: [10]
+
+  training.batch_size:
+    values: [32]

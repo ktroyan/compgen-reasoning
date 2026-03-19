@@ -12,9 +12,9 @@ pad_token_id: ${data.pad_token_id}
 
 # --- Dimensions ---
 # Inherit start value from data, but DataModule will overwrite this at runtime
-input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input/embedding layer; it may be different from the output vocab size if we have special tokens that are only used in the input (e.g. task tokens) and that we do not want to predict
-output_vocab_size: ${data.output_vocab_size}
-output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens)
+input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input embedding layer; it may be different from the output vocab size if we have special tokens that are only used in the input (e.g. task tokens) and that we do not want to predict
+output_vocab_size: ${data.output_vocab_size}  # this is the vocab size for the output layer; it should be equal to the number of possible tokens that can appear in the grid we want to predict
+output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens); this should be equal to output_vocab_size
 
 d_model: 128  # input dimension
 hidden_dim: 256
@@ -34,18 +34,20 @@ rpe:
   type: "2d-rope"  # 1d-rope, 2d-rope
 
 # Recursion
-N_sup: 16  # maximum number of recursive steps over the same sample during training
-trm_n: 6  # number of loops to updated the latent state within the latent recursion
-trm_T: 3  # number of refinement loops (T-1 without gradients and 1 with gradients)
+N_sup: 16   # maximum number of recursive steps over the same sample during training
+trm_n: 6    # number of loops to updated the latent state within the latent recursion
+trm_T: 3    # number of refinement loops (T-1 without gradients and 1 with gradients)
 
 # Loss
-loss_func: "cross_entropy"  # "cross_entropy" | "stable_loss"; TODO: implement
-q_loss_weight: 0.5  # weight for the halting Q-node when calculating the total loss (cross-entropy loss + q_loss)
+loss_func: "cross_entropy"  # "cross_entropy" | "focal"
+foreground_weight: 10.0     # weight for non-background cells (values 1-9) relative to background (0); set to 1.0 to disable
+focal_gamma: 2.0            # down-weighting exponent for easy examples (only used when loss_func is set to "focal")
+q_loss_weight: 0.5          # weight for the halting Q-node when calculating the total loss (reconstruction loss + q_loss)
 
 # --- Optimization ---
 optimizer: "adamw"  # "adamw" | "adam" | "sgd"
 lr: 1e-4
-embeddings_lr: 1e-2  # initial learning rate for the update of the input embeddings; set higher than the rest of the model to encourage faster learning of the input embeddings 
+embeddings_lr: 1e-2  # initial learning rate for the update of the input embeddings layer; set higher than the rest of the model to encourage faster learning of the input embeddings 
 weight_decay: 1e-1
 
 lr_scheduler:
@@ -57,4 +59,4 @@ lr_scheduler:
 lr_warmup:
   enabled: true
   type: "linear"
-  num_steps: 500 # in TRM paper: 2000 steps.
+  num_steps: 200 # in TRM paper: 2000 steps.

@@ -17,5 +17,7 @@ save_top_k: 1
 
 check_val_every_n_epoch: 1
 
+accumulate_grad_batches: 1  # gradient accumulation; accumulate gradients over N batches before optimizer step (effective batch size = batch_size * accumulate_grad_batches)
+
 num_workers: 4
 devices: 1
