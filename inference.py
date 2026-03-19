@@ -78,6 +78,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
         "devices": cfg.inference.get("devices", 1),
         "logger": loggers,
         "enable_checkpointing": False,
+        "enable_progress_bar": cfg.logging.get("use_progress_bar", False) and "SLURM_JOB_ID" not in os.environ,
     }
 
     trainer = pl.Trainer(**trainer_args)

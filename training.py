@@ -162,7 +162,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
     ## Learning Rate Monitor
     callbacks.append(LearningRateMonitor(logging_interval="epoch", log_momentum=True))
 
-    ## Clean epoch summary (useful for SLURM / non-TTY log files)
+    ## Simple epoch summary (useful for SLURM / non-TTY log files)
     callbacks.append(EpochSummaryCallback())
 
 
@@ -177,6 +177,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         "accelerator": cfg.training.get("accelerator", "auto"),
         "devices": cfg.training.get("devices", "auto"),
         "gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0),
+        "accumulate_grad_batches": cfg.training.get("accumulate_grad_batches", 1),
         "check_val_every_n_epoch": cfg.training.get("check_val_every_n_epoch", 1),
         # Disable the progress bar under SLURM. SLURM_JOB_ID is always set for batch jobs.
         "enable_progress_bar": cfg.logging.get("use_progress_bar", False) and "SLURM_JOB_ID" not in os.environ,
