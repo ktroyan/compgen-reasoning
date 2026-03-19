@@ -72,6 +72,51 @@ class ModelModule(pl.LightningModule):
             return str(self.trainer.datamodule.tokenizer.decode(ids))
         return str(token_ids.detach().cpu().tolist())
 
+    def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+        """
+        Cross-entropy or focal loss with optional foreground class weighting and padding ignored.
+
+        Args:
+            logits:  [B, S, C] or already reshaped [B*S, C]
+            targets: [B, S]    or already reshaped [B*S]
+            reduction: "mean" | "none_per_sample"
+                - "mean": scalar loss over all non-padding tokens
+                - "none_per_sample": [B] tensor, one value per sample
+
+        Returns:
+            loss: scalar or [B] depending on `reduction`
+        """
+        B = targets.shape[0] if targets.dim() == 2 else None
+        S = targets.shape[1] if targets.dim() == 2 else None
+
+        logits_flat = logits.reshape(-1, logits.size(-1))
+        targets_flat = targets.reshape(-1)
+
+        weight = getattr(self, "loss_weights", None)
+        pad_id = getattr(self, "pad_token_id", -100)
+
+        ce = F.cross_entropy(
+            logits_flat, targets_flat,
+            weight=weight,
+            ignore_index=pad_id,
+            reduction="none"
+        )  # [B*S]; 0.0 at ignored (pad) positions
+
+        if self.loss_func == "focal":
+            # Down-weight easy examples: (1 - p_t)^gamma * CE
+            pt = torch.exp(-ce)
+            ce = (1 - pt).pow(self.focal_gamma) * ce
+
+        if reduction == "mean":
+            non_pad = (targets_flat != pad_id).float()
+            return ce.sum() / non_pad.sum().clamp(min=1)
+
+        # "none_per_sample": average over non-padding positions within each sample
+        ce = ce.view(B, S)
+        non_pad = (targets != pad_id).float()  # [B, S]
+        
+        return ce.sum(dim=1) / non_pad.sum(dim=1).clamp(min=1)  # [B]
+
 class TRMModel(ModelModule):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -102,17 +147,21 @@ class TRMModel(ModelModule):
         self.decoder = TRMDecoder(cfg)
 
         # --- Loss Function ---
+        pad_id = cfg.data.pad_token_id
+        output_vocab_size = cfg.model.get("output_vocab_size")
+        foreground_weight = cfg.model.get("foreground_weight", 1.0)
 
-        # Weights for class token imbalance
-        # self.num_classes = self.vocab_size
-        # loss_weights = torch.ones(self.num_classes)
-        # loss_weights[1:10] = 5.0 
-        # self.register_buffer("loss_weights", loss_weights)  # register to handle device transfer
+        # Class weights: upweight non-background cells (values 1-9) vs background (0)
+        if foreground_weight != 1.0:
+            loss_weights = torch.ones(output_vocab_size)
+            loss_weights[1:] = foreground_weight
+            self.register_buffer("loss_weights", loss_weights)
+        else:
+            self.loss_weights = None
 
-        # self.loss_fn = nn.CrossEntropyLoss()
-        # self.loss_fn = nn.CrossEntropyLoss(weight=self.loss_weights, ignore_index=self.cfg.data.pad_token_id)
-        # self.loss_fn = nn.CrossEntropyLoss(weight=self.loss_weights, ignore_index=0)
-        # self.loss_fn = nn.CrossEntropyLoss(ignore_index=self.cfg.data.pad_token_id)
+        self.pad_token_id = pad_id
+        self.loss_func = cfg.model.get("loss_func", "cross_entropy")
+        self.focal_gamma = cfg.model.get("focal_gamma", 2.0)
 
         # --- Logging ---
         self.epoch_samples = {}
@@ -242,12 +291,8 @@ class TRMModel(ModelModule):
             with torch.no_grad():
                 seq_correct = (preds == tgt_grid).all(dim=-1)    # [B]; check if the entire sequence is correct for each sample in the batch
 
-            # Cross-entropy per sample
-            ce_loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                tgt_grid.reshape(-1),
-                reduction="none"
-            ).view(B, -1).mean(dim=1)  # [B]
+            # Loss per sample (e.g., cross-entropy with class weights and padding ignored)
+            ce_loss = self._compute_loss(logits, tgt_grid, reduction="none_per_sample")  # [B]
 
             # Q-loss per sample
             q_loss = F.binary_cross_entropy_with_logits(
@@ -259,7 +304,7 @@ class TRMModel(ModelModule):
             loss_per_sample = ce_loss + self.cfg.model.get("q_loss_weight", 1.0) * q_loss
 
             # Only accumulate loss for active samples
-            # Accumulating the loss across all recursive steps is called Deep Supervision. We only do it for training
+            # Accumulating the loss across all recursive steps is called Deep Supervision. Note that we only do it for training
             active_mask = ~halted
             total_loss += (loss_per_sample * active_mask.float()).mean()
 
@@ -378,17 +423,12 @@ class TRMModel(ModelModule):
                 if halted.all():
                     break
 
-        # loss = self.loss_fn(logits.transpose(1, 2), tgt_grid)
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            tgt_grid.reshape(-1),
-            reduction="mean"
-        )
+        loss = self._compute_loss(logits, tgt_grid, reduction="mean")
 
         preds = torch.argmax(logits, dim=-1)
-        
+
         metrics = self.compute_metrics(preds, tgt_grid)
-        
+
         # Determine prefix based on dataloader index
         # 0 -> ID, 1 -> OOD (assuming DataModule returns [id_loader, ood_loader])
         prefix = "id" if dataloader_idx == 0 else "ood"
@@ -540,19 +580,14 @@ class TRMModel(ModelModule):
                     if halted.all():
                         break
 
-        # loss = self.loss_fn(logits.transpose(1, 2), tgt_grid)
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            tgt_grid.reshape(-1),
-            reduction="mean"
-        )
+        loss = self._compute_loss(logits, tgt_grid, reduction="mean")
 
         preds = torch.argmax(logits, dim=-1)
 
         metrics = self.compute_metrics(preds, tgt_grid)
-        
+
         prefix = "id" if dataloader_idx == 0 else "ood"
-        
+
         self.log(f"test/{prefix}_loss", loss, on_step=False, on_epoch=True, add_dataloader_idx=False, prog_bar=True)
         self.log(f"test/{prefix}_acc", metrics["acc"], on_step=False, on_epoch=True, add_dataloader_idx=False, prog_bar=True)
         self.log(f"test/{prefix}_grid_acc", metrics["grid_acc"], on_step=False, on_epoch=True, add_dataloader_idx=False, prog_bar=True)
@@ -609,27 +644,6 @@ class TRMModel(ModelModule):
                     logger.info(f"  Pred:   {self.decode_sample(pred)}")
     
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        """
-        Override the PyTorch Lightning optimizer_step method to add custom logic before the optimizer.step() call.
-        
-        NOTE: We overwrite it for learning rate warm-up.
-        """
-
-        if self.cfg.model.get("lr_warmup", {}).get("enabled", False):
-            if self.cfg.model.lr_warmup.type == "linear":
-                # Linear LR warm up
-                num_lr_warmup_steps = self.cfg.model.lr_warmup.num_steps
-                if self.trainer.global_step < num_lr_warmup_steps:
-                    lr_scale = min(1.0, float(self.trainer.global_step + 1) / num_lr_warmup_steps)
-                    for pg in optimizer.param_groups:
-                        pg["lr"] = lr_scale * self.cfg.model.lr
-            else:
-                raise ValueError(f"Unknown LR warmup type given: {self.cfg.model.lr_warmup.type}")
-
-        # This is the content of the original optimizer_step method from PyTorch Lightning
-        optimizer.step(closure=optimizer_closure)   # update params
-
     def configure_optimizers(self):
         """ 
         Initializes the optimizer and the learning rate scheduler. 
@@ -641,16 +655,34 @@ class TRMModel(ModelModule):
             optimizer_config (dict): A dictionary containing the optimizer and the learning rate scheduler to be used during training.
         """
 
+        # Split parameters: embedding layer gets its own (higher) LR, everything else uses the base LR
+        base_lr = self.cfg.model.lr
+        emb_lr = self.cfg.model.get("embeddings_lr", base_lr)
+
+        # Get input embedding layer parameters from the encoder
+        emb_params = list(self.encoder.input_embedding.parameters())
+        emb_param_ids = {id(p) for p in emb_params}
+
+        # Get all other parameters that are not part of the input embedding layer
+        other_params = [p for p in self.parameters() if id(p) not in emb_param_ids]
+
+        # Define parameter groups with their respective learning rates
+        # The "initial_lr" key is stored per group and used for learning rate warmup scaling
+        param_groups = [
+            {"params": other_params,  "lr": base_lr, "initial_lr": base_lr},
+            {"params": emb_params,    "lr": emb_lr,  "initial_lr": emb_lr,  "name": "embeddings"},
+        ]
+
         # Define the optimizer
         if self.cfg.model.optimizer == 'adam':
-            optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.model.lr, weight_decay=self.cfg.model.weight_decay)
-        
+            optimizer = torch.optim.Adam(param_groups, weight_decay=self.cfg.model.weight_decay)
+
         elif self.cfg.model.optimizer == 'adamw':
-            optimizer = torch.optim.AdamW(self.parameters(), lr=self.cfg.model.lr, weight_decay=self.cfg.model.weight_decay, betas=(0.9, 0.95)) # betas are as per the TRM paper
-        
+            optimizer = torch.optim.AdamW(param_groups, weight_decay=self.cfg.model.weight_decay, betas=(0.9, 0.95))  # betas as per the TRM paper
+
         elif self.cfg.model.optimizer == 'sgd':
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.cfg.model.lr, momentum=0.9, weight_decay=self.cfg.model.weight_decay)
-        
+            optimizer = torch.optim.SGD(param_groups, momentum=0.9, weight_decay=self.cfg.model.weight_decay)
+
         else:
             raise ValueError(f"Unknown optimizer given: {self.cfg.model.optimizer}")
 
@@ -678,3 +710,24 @@ class TRMModel(ModelModule):
         }
 
         return optimizer_config
+
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+        """
+        Override the PyTorch Lightning optimizer_step method to add custom logic before the optimizer.step() call.
+        
+        NOTE: We overwrite it for learning rate warm-up.
+        """
+
+        if self.cfg.model.get("lr_warmup", {}).get("enabled", False):
+            if self.cfg.model.lr_warmup.type == "linear":
+                # Linear LR warm up
+                num_lr_warmup_steps = self.cfg.model.lr_warmup.num_steps
+                if self.trainer.global_step < num_lr_warmup_steps:
+                    lr_scale = min(1.0, float(self.trainer.global_step + 1) / num_lr_warmup_steps)
+                    for pg in optimizer.param_groups:
+                        pg["lr"] = lr_scale * pg["initial_lr"]
+            else:
+                raise ValueError(f"Unknown LR warmup type given: {self.cfg.model.lr_warmup.type}")
+
+        # This is the content of the original optimizer_step method from PyTorch Lightning
+        optimizer.step(closure=optimizer_closure)   # update params

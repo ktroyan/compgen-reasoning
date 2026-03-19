@@ -646,10 +646,10 @@ class TRMEncoder(nn.Module):
         #       The input token IDs are expected to be in the range [0, vocab_size-1], where each ID corresponds to a specific token in the vocabulary.
         #       The embedding layer learns a dense vector representation for each token ID during training, which allows the model to capture semantic relationships between tokens based on their usage in the training data.
         #       The embedding layer is initialized with random weights from a normal distribution (mean=0, std=0.02).
-        self.embedding = nn.Embedding(self.vocab_size, self.d_model)
+        self.input_embedding = nn.Embedding(self.vocab_size, self.d_model)
         # TODO: Set the initial LR for the update of the embeddings to 1e-2 or something higher than the rest of the model to encourage faster learning of the input embeddings, especially in the early stages of training when the model is still learning to map token IDs to meaningful representations.
         #       Also see for a better initial distribution
-        # nn.init.normal_(self.embedding.weight, mean=0.0, std=0.02)
+        # nn.init.normal_(self.input_embedding.weight, mean=0.0, std=0.02)
 
 
         # --- Encoder Layers ---
@@ -726,7 +726,7 @@ class TRMEncoder(nn.Module):
 
 
         # ---- Embed input ----
-        x = self.embedding(src) # [B, S, D]; embed the input token IDs to get their initial embeddings
+        x = self.input_embedding(src) # [B, S, D]; embed the input token IDs to get their initial embeddings
 
         # TODO: not sure if we should scale the embeddings by sqrt(d_model) as in the original Transformer paper
         #       It is often done to help with optimization, but not sure if it makes sense with any APE
