@@ -1,12 +1,6 @@
 #!/bin/bash
-# run_experiment.slurm
-# SLURM script to run a single experiment using main.py
-# This file:
-# - Loads environment and activates the venv
-# - Sets SLURM options for GPU nodes
-# - Runs the Python experiment with Hydra config
-# - Designed to work with single or multiple GPUs
-# #SBATCH --gres=gpu:1
+# run_sweep.slurm
+# SLURM script to run one WandB sweep agent for a given sweep ID
 
 # To run on RTX 3090 GPU:
 # #SBATCH --gres=gpu:rtx3090:1
@@ -16,12 +10,11 @@
 # #SBATCH --gres=gpu:rtx5090:1
 
 
-#SBATCH --job-name=compgen-experiment  # Job name
+#SBATCH --job-name=compgen-wandb_sweep  # Job name
 #SBATCH -D ./
 #SBATCH --output=logs/%x_%j.out        # Standard output
 #SBATCH --error=logs/%x_%j.err         # Standard error
-#SBATCH -p rtx5090
-#SBATCH --gres=gpu:rtx5090:1
+#SBATCH --gres=gpu:rtx3090:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64             # Number of CPU cores
 #SBATCH --time=24:00:00                # Max runtime (HH:MM:SS)
@@ -41,16 +34,20 @@ else
     exit 1
 fi
 
-# Set WANDB API key (better to do it like this here for SLURM)
 export WANDB_API_KEY=$(cat ~/.secrets/wandb_api_key)
 
-# Info
-echo "Running on node: $(hostname)"
-echo "CUDA_VISIBLE_DEVICES from SLURM: $CUDA_VISIBLE_DEVICES"
+echo "Running on $(hostname)"
 nvidia-smi || true
 
+# Argument required is the sweep ID
+if [ -z "$1" ]; then
+    echo "Usage: sbatch run_sweep.slurm <username>/<project>/<sweep_id>"
+    exit 1
+fi
+
+SWEEP_ID=$1
+
 # -----------------------
-# Run Python experiment
+# Run WandB sweep agent (for the given sweep ID)
 # -----------------------
-# Pass additional Hydra CLI overrides and launch SLURM job for the Python script
-srun -u uv run main.py "$@"
+srun -u wandb agent "$SWEEP_ID"
