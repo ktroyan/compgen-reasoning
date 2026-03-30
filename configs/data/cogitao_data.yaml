@@ -22,6 +22,13 @@ eos_token_id: 12
 unk_token_id: 13
 task_pad_token_id: null # computed dynamically in data.py; padding token id for the sequence of task tokens (if using task tokens); it is semantically different from the grid padding, so we give it a different ID
 
+# Data augmentation (applied to training set only, before any preprocessing)
+data_augmentation:
+  use_data_augmentation: false
+  type: color_swap       # supported: color_swap | grid_flip | grid_rotation
+  num_copies: 1          # number of augmented copies to generate per training sample
+  seed: 42               # random seed for reproducibility
+
 # Dynamic dataset stats placeholders (computed at runtime)
 max_h: null # size of largest grid height across all tasks; this includes the padding tokens added to make the grid sizes match
 max_w: null # size of largest grid width across all tasks; this includes the padding tokens added to make the grid sizes match

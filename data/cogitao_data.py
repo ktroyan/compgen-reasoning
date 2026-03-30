@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
+import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 from typing import List, Dict, Any, Optional, Tuple, Set
 from omegaconf import OmegaConf
@@ -24,6 +25,197 @@ try:
     HF_AVAILABLE = True
 except ImportError:
     HF_AVAILABLE = False
+
+def _grid_to_numpy(grid) -> np.ndarray:
+    """ Convert any supported grid format to a 2D numpy int array. """
+    
+    if isinstance(grid, np.ndarray):
+        if grid.dtype == object:
+            grid = np.stack([np.array(row) for row in grid])
+        return grid.astype(int)
+    
+    if isinstance(grid, list):
+        return np.array(grid, dtype=int)
+    
+    raise TypeError(f"Unsupported grid type for augmentation: {type(grid)}")
+
+
+def _apply_color_permutation(grid_np: np.ndarray, color_map: Dict[int, int]) -> np.ndarray:
+    """ 
+    Apply a color permutation to a 2D grid copy.
+    
+    NOTE: Value 0 is never remapped as it is background value; only values 1-9 are remapped according to the provided color_map.
+    """
+
+    color_swapped_grid = grid_np.copy()
+    for old_color, new_color in color_map.items():
+        color_swapped_grid[grid_np == old_color] = new_color
+    
+    return color_swapped_grid
+
+
+def _augment_color_swap(df_train: pd.DataFrame, num_copies: int, seed: int) -> pd.DataFrame:
+    """
+    Create augmented training samples by randomly permuting values 1-9 (colors in the grid).
+
+    For each original sample, generates `num_copies` new samples where every
+    1-9 grid cell value is consistently remapped (same permutation applied
+    to both input and output grids). Value 0 (background) is never changed.
+
+    Args:
+        df_train: Original training DataFrame.
+        num_copies: Number of augmented copies to generate per sample.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        DataFrame train set with original rows followed by augmented rows.
+    """
+    rng = np.random.RandomState(seed)
+    new_rows = []
+
+    for _, row in df_train.iterrows():
+        src_np = _grid_to_numpy(row['input'])
+        tgt_np = _grid_to_numpy(row['output'])
+
+        # Colors actually present (excluding background 0)
+        present_colors = set(np.unique(src_np).tolist()) | set(np.unique(tgt_np).tolist())
+        present_colors.discard(0)
+
+        generated = 0
+        attempts = 0
+        max_attempts = num_copies * 20  # guard against infinite loops on degenerate grids
+
+        while generated < num_copies and attempts < max_attempts:
+            attempts += 1
+            perm = rng.permutation(9) + 1  # random permutation of [1..9]
+            color_map = {int(i + 1): int(perm[i]) for i in range(9)}
+
+            if all(color_map[c] == c for c in present_colors):
+                continue  # skip identity-equivalent permutations
+
+            new_row = row.copy()
+            new_row['input'] = _apply_color_permutation(src_np, color_map)
+            new_row['output'] = _apply_color_permutation(tgt_np, color_map)
+            new_rows.append(new_row)
+            generated += 1
+
+    if not new_rows:
+        return df_train
+
+    augmented_df = pd.DataFrame(new_rows, columns=df_train.columns)
+    
+    return pd.concat([df_train, augmented_df], ignore_index=True)
+
+def _apply_flip(grid_np: np.ndarray, axis: int) -> np.ndarray:
+    """ Return a flipped copy of a 2D grid along the given numpy axis (0=vertical, 1=horizontal). """
+    return np.flip(grid_np, axis=axis).copy()
+
+def _augment_grid_flip(df_train: pd.DataFrame, num_copies: int, seed: int) -> pd.DataFrame:
+    """
+    Create augmented training samples by randomly flipping grids.
+
+    For each original sample, generates `num_copies` new samples where both
+    the input and output grids are flipped along the same randomly chosen axis:
+      - axis 0: vertical flip (top <-> bottom)
+      - axis 1: horizontal flip (left <-> right)
+      - both axes: equivalent to 180° rotation
+
+    The same flip is applied to both input and output, preserving the
+    input -> output relationship. Grid dimensions are unchanged.
+    All other metadata (e.g. transformation_suite) is copied from the original row.
+
+    NOTE: This augmentation should be ok for any COGITAO transformation.
+
+    Args:
+        df_train: Original training DataFrame.
+        num_copies: Number of augmented copies to generate per sample.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        DataFrame with original rows followed by augmented rows.
+
+    """
+    rng = np.random.RandomState(seed)
+    
+    # Possible flip modes: vertical, horizontal, both
+    flip_modes = [
+        (0,),     # vertical
+        (1,),     # horizontal
+        (0, 1),   # both axes
+    ]
+
+    new_rows = []
+
+    for _, row in df_train.iterrows():
+        src_np = _grid_to_numpy(row['input'])
+        tgt_np = _grid_to_numpy(row['output'])
+
+        for _ in range(num_copies):
+            mode = flip_modes[rng.randint(len(flip_modes))]
+            src_aug = src_np.copy()
+            tgt_aug = tgt_np.copy()
+            
+            for axis in mode:
+                src_aug = _apply_flip(src_aug, axis)
+                tgt_aug = _apply_flip(tgt_aug, axis)
+
+            new_row = row.copy()
+            new_row['input'] = src_aug
+            new_row['output'] = tgt_aug
+            new_rows.append(new_row)
+
+    if not new_rows:
+        return df_train
+
+    augmented_df = pd.DataFrame(new_rows, columns=df_train.columns)
+    
+    return pd.concat([df_train, augmented_df], ignore_index=True)
+
+def _apply_rotation(grid_np: np.ndarray, rot_amount: int) -> np.ndarray:
+    """ Return a rotated copy of a 2D grid by the given amount (1-3 in 90° counterclockwise rotations). """
+    return np.rot90(grid_np, k=rot_amount).copy()
+
+def _augment_grid_rotation(df_train: pd.DataFrame, num_copies: int, seed: int) -> pd.DataFrame:
+    """
+    Create augmented training samples by randomly rotating grids by 90°, 180°, or 270°.
+
+    For each original sample, generates `num_copies` new samples where both
+    the input and output grids are rotated by the same randomly chosen angle.
+    
+    NOTE: 90° and 270° rotations swap H and W dimensions, but this is ok even for non-square grids
+          since the augmentation runs before the splits are analyzed for max dimensions and before any padding is applied.
+
+    Args:
+        df_train: Original training DataFrame.
+        num_copies: Number of augmented copies to generate per sample.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        DataFrame with original rows followed by augmented rows.
+    
+    """
+    rng = np.random.RandomState(seed)
+    new_rows = []
+
+    for _, row in df_train.iterrows():
+        src_np = _grid_to_numpy(row['input'])
+        tgt_np = _grid_to_numpy(row['output'])
+
+        for _ in range(num_copies):
+            k_times_90 = rng.randint(1, 4)  # 1, 2, or 3 -> 90°, 180°, 270° counterclockwise
+
+            new_row = row.copy()
+            new_row['input'] = _apply_rotation(src_np, rot_amount=k_times_90)
+            new_row['output'] = _apply_rotation(tgt_np, rot_amount=k_times_90)
+            new_rows.append(new_row)
+
+    if not new_rows:
+        return df_train
+
+    augmented_df = pd.DataFrame(new_rows, columns=df_train.columns)
+    
+    return pd.concat([df_train, augmented_df], ignore_index=True)
+
 
 class GridTokenizer:
     """
@@ -449,6 +641,35 @@ class GridDataModule(pl.LightningDataModule):
                 logger.warning("OOD Validation data is missing but use_ood_val is True.")
             if self.use_ood_test and df_test_ood is None:
                 logger.warning("OOD Test data is missing but use_ood_test is True.")
+
+            # ------------------------------
+            # Data augmentation (training set only, applied before any stats or tokenization)
+            # ------------------------------
+            aug_cfg = self.cfg.data.get("data_augmentation", None)
+
+            if aug_cfg is not None and aug_cfg.use_data_augmentation:
+                aug_type = aug_cfg.get("type", None)
+                
+                aug_types = {"color_swap", "grid_flip", "grid_rotation"}
+                if aug_type not in aug_types:
+                    raise ValueError(f"Unsupported data augmentation type: '{aug_type}'. Supported: {aug_types}")
+                
+                num_copies = int(aug_cfg.get("num_copies", 1))
+                original_df_train_len = len(df_train)
+                
+                logger.info(f"Applying '{aug_type}' augmentation to training set "
+                            f"(num_copies={num_copies}, seed={self.cfg.seed}, avoid_identity=True)...")
+                
+                if aug_type == "color_swap":
+                    df_train = _augment_color_swap(df_train, num_copies=num_copies, seed=self.cfg.seed)
+                
+                elif aug_type == "grid_flip":
+                    df_train = _augment_grid_flip(df_train, num_copies=num_copies, seed=self.cfg.seed)
+                
+                elif aug_type == "grid_rotation":
+                    df_train = _augment_grid_rotation(df_train, num_copies=num_copies, seed=self.cfg.seed)
+                
+                logger.info(f"Training set size after augmentation: {original_df_train_len} -> {len(df_train)} samples.")
 
             # Log sample structure for debugging
             self._log_sample_structure(df_train, "train")
