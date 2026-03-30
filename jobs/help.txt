@@ -13,4 +13,5 @@
 2) To launch one agent through one SLURM job, run:
    sbatch ./jobs/run_sweep.slurm <username>/<project>/<sweep_id>
 
-3) [Optional] To launch one more agent for parallelization of the sweep, we just repeat the previous command: sbatch ./jobs/run_sweep.slurm <username>/<project>/<sweep_id>
+3) [Optional] To launch one more agent for parallelization of the sweep, we just repeat the previous command: 
+   sbatch ./jobs/run_sweep.slurm <username>/<project>/<sweep_id>
