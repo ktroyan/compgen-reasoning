@@ -1,8 +1,12 @@
 output_dim: ${model.d_model}
-ff_dim: 512
-num_layers: 6
+ff_dim: 1024
+num_layers: 6 # 6
 num_heads: 4
 attn_dropout: 0.1
 proj_dropout: 0.0
 ff_dropout: 0.1
-activation_func: "relu"
+ff_type: "convswiglu" # type of feedforward network; "mlp" for the typical 2-layer MLP, "convswiglu" for ConvSwiGLU feedforward
+activation_func: "gelu" # activation function for the feedforward network; "relu", "gelu", "leaky_relu"
+norm: "rmsnorm" # type of normalization layer; "layernorm", "rmsnorm"
+weights_init: "xavier" # type of weight initialization; "xavier", "kaiming", "normal", "trunc_normal"
+use_activations_checkpointing: false  # recompute activations during backprop to save GPU memory at the cost of more compute
