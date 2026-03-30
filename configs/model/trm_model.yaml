@@ -16,8 +16,7 @@ input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input emb
 output_vocab_size: ${data.output_vocab_size}  # this is the vocab size for the output layer; it should be equal to the number of possible tokens that can appear in the grid we want to predict
 output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens); this should be equal to output_vocab_size
 
-d_model: 128  # input dimension
-hidden_dim: 256
+d_model: 256  # input dimension; 128
 
 dropout: 0.1
 
@@ -59,4 +58,4 @@ lr_scheduler:
 lr_warmup:
   enabled: true
   type: "linear"
-  num_steps: 200 # in TRM paper: 2000 steps.
+  num_steps: 200 # in TRM paper: 2000 steps
