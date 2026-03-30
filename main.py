@@ -32,7 +32,7 @@ from training import run_training
 from inference import run_inference
 
 # WandB utilities
-from utility.wandb_utils import setup_wandb
+from utility.wandb_utils import save_num_params_to_wandb, save_num_samples_to_wandb, setup_wandb
 
 # Data
 from data.cogitao_data import GridDataModule  
@@ -92,9 +92,13 @@ def main(cfg: DictConfig):
     else:
         raise ValueError(f"DataModule '{cfg.data}' not recognized. Please check the config defaults and ensure the corresponding DataModule is implemented and imported in main.py.")
 
-    # Just a sanity check to ensure the DataModule can be set up without errors before proceeding to visualization and training
+    # Sanity check to ensure the DataModule can be set up without errors before proceeding to visualization and training
     try:
         dm.setup(stage="fit")
+
+        if use_wandb and wandb.run:
+            save_num_samples_to_wandb(dm)
+    
     except Exception as e:
         logger.error(f"DataModule setup failed. Cannot proceed: {e}")
         raise e
@@ -145,6 +149,10 @@ def main(cfg: DictConfig):
         model, _latest_model, _ckpt_dict = run_training(cfg, model, dm)
     else:
         logger.info("Skipping Training (cfg.experiment.run_training is False)")
+
+    # Save number of parameters in the model to WandB
+    if use_wandb and wandb.run:
+        save_num_params_to_wandb(model)
 
     if do_inference:
         logger.info("--- Starting Inference Phase ---")
