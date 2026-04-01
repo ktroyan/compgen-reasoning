@@ -3,7 +3,11 @@ models/model_helpers.py
 
 """
 
+import math
 import os
+from typing import Optional
+
+import torch
 
 try:    # to avoid the program to crash if wandb is not installed and user doesn't want to use it
     import wandb
@@ -11,6 +15,81 @@ except ImportError:
     wandb = None
 
 from utility.logging_utils import logger
+
+
+# ------------------------------------------------------------------
+# StableMax (StCE loss from "Grokking at the Edge of Numerical Stability")
+# ------------------------------------------------------------------
+def _s(x: torch.Tensor) -> torch.Tensor:
+    """ Stable ramp function: s(x) = x+1 if x>=0, else 1/(1-x). Always > 0. """
+    return torch.where(x >= 0, x + 1.0, 1.0 / (1.0 - x))
+
+
+def stce_loss(logits_flat: torch.Tensor, targets_flat: torch.Tensor, pad_id: int, weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """
+    StableMax Cross-Entropy: -log(StableMax(z_y)) = log(sum_j s(z_j)) - log(s(z_y)).
+
+    L_StCE = -log(StableMax(z_y))
+       = -log( s(z_y) / Σ_j s(z_j) )    # expand definition from eq. (5) of the paper
+       = -log(s(z_y)) + log(Σ_j s(z_j)) # log of a ratio is the difference of logs
+       = log(Σ_j s(z_j)) - log(s(z_y))  # what we actually use since we do not want to materialize the full prob. distr. (since in s(z_j) for all j, only s(z_y) is needed)
+
+    Returns [B*S] with 0.0 at padding positions.
+
+    """
+    # Compute the stable ramp function for all logits and the log of the sum across classes
+    sx = _s(logits_flat)                                                # [B*S, C]
+    log_sum_sx = torch.log(sx.sum(dim=-1))                              # [B*S]
+    
+    # Gather the s(z_y) values for the true classes using advanced indexing
+    idx = torch.arange(len(targets_flat), device=logits_flat.device)
+    true_sx = sx[idx, targets_flat.clamp(min=0)]
+    log_true_sx = torch.log(true_sx.clamp(min=1e-12))                   # [B*S]
+    
+    # Difference between log_sum_sx and log_true_sx, which corresponds to -log(StableMax(z_y))
+    loss = log_sum_sx - log_true_sx                                     # [B*S]
+    
+    # Apply class weights if provided (only on non-padding positions)
+    if weight is not None:
+        loss = loss * weight[targets_flat.clamp(min=0)]  # scale by class weight, same as F.cross_entropy
+    
+    # Mask out padding positions (where targets_flat == pad_id) by zeroing out the loss there
+    loss = loss * (targets_flat != pad_id).float()                      # zero out padding positions
+    
+    return loss
+
+# ------------------------------------------------------------------
+# Truncated Normal Initialization (as per JAX since the PyTorch version is not mathematically correct)
+# See https://github.com/olivkoch/nano-trm/blob/main/src/nn/modules/utils.py#L13
+# ------------------------------------------------------------------
+def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2.0, upper: float = 2.0):
+    # NOTE: PyTorch nn.init.trunc_normal_ is not mathematically correct, the std dev is not actually the std dev of initialized tensor
+    # This function is a PyTorch version of jax truncated normal init (default init method in flax)
+    # https://github.com/jax-ml/jax/blob/main/jax/_src/random.py#L807-L848
+    # https://github.com/jax-ml/jax/blob/main/jax/_src/nn/initializers.py#L162-L199
+
+    with torch.no_grad():
+        if std == 0:
+            tensor.zero_()
+        else:
+            sqrt2 = math.sqrt(2)
+            a = math.erf(lower / sqrt2)
+            b = math.erf(upper / sqrt2)
+            z = (b - a) / 2
+
+            c = (2 * math.pi) ** -0.5
+            pdf_u = c * math.exp(-0.5 * lower**2)
+            pdf_l = c * math.exp(-0.5 * upper**2)
+            comp_std = std / math.sqrt(
+                1 - (upper * pdf_u - lower * pdf_l) / z - ((pdf_u - pdf_l) / z) ** 2
+            )
+
+            tensor.uniform_(a, b)
+            tensor.erfinv_()
+            tensor.mul_(sqrt2 * comp_std)
+            tensor.clip_(lower * comp_std, upper * comp_std)
+
+    return tensor
 
 # ------------------------------------------------------------------
 # Extract Evolution Samples
@@ -33,7 +112,7 @@ def _extract_evolution_samples(model_module, src, tgt, preds):
 
 
 # ------------------------------------------------------------------
-# Helper: Plot Evolution Grids
+# Plot Evolution Grids
 # ------------------------------------------------------------------
 def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
     if not model_module.visualize_predictions or not records:
@@ -44,13 +123,14 @@ def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
         import matplotlib.colors as mcolors
         import numpy as np
         from utility.visualization_utils import get_arc_colormap
+    
     except ImportError as e:
         logger.warning(f"Skipping prediction grid visualization. Missing dependency: {e}")
         return
 
     h = model_module.cfg.model.max_h
     w = model_module.cfg.model.max_w
-    use_tasks = model_module.cfg.model.get("use_task_tokens", True)
+    use_tasks = model_module.cfg.model.get("use_task_tokens", False)
     max_task_len = model_module.cfg.model.get("max_task_seq_len", 0) if use_tasks else 0
     
     # Calculate exactly where the grid tokens start in the source sequence
@@ -59,7 +139,7 @@ def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
     n_samples = len(records)
     fig, axes = plt.subplots(n_samples, 3, figsize=(10, 3 * n_samples))
     if n_samples == 1:
-        axes = [axes] # Ensure iterable
+        axes = [axes] # ensure iterable
 
     # Get the standard ARC colormap
     try:
@@ -141,7 +221,7 @@ def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
 
 
 # ------------------------------------------------------------------
-# Helper: Plot Metrics History
+# Plot Metrics History
 # ------------------------------------------------------------------
 def _plot_metrics(model_module, save_dir: str):
     try:
