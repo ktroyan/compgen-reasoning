@@ -32,6 +32,12 @@ from omegaconf import DictConfig
 
 # Custom Logger import
 from utility.logging_utils import logger
+from callbacks.ema_callback import EMACallback
+
+# For flash / memory-efficient kernels when available (e.g., A100, RTX40xx, etc.), otherwise
+# use math kernels for older GPUs.
+torch.nn.attention.sdpa_kernel("auto")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 class EpochSummaryCallback(pl.Callback):
@@ -70,12 +76,6 @@ class EpochSummaryCallback(pl.Callback):
 
         lines.append(sep)
         logger.info("\n" + "\n".join(lines))
-
-# For flash / memory-efficient kernels when available (e.g., A100, RTX40xx, etc.), otherwise
-# use math kernels for older GPUs.
-torch.nn.attention.sdpa_kernel("auto")
-
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.LightningDataModule):
@@ -159,6 +159,13 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         logger.info(f"Early stopping on {monitor_metric}, Patience: {patience}")
         callbacks.append(EarlyStopping(monitor=monitor_metric, patience=patience, mode=monitor_metric_mode, verbose=True))
 
+    ## EMA
+    if cfg.training.get("ema", {}).get("enabled", False):
+        ema_decay = cfg.training.ema.get("decay", 0.999)
+        ema_cpu_offload = cfg.training.ema.get("cpu_offload", True)
+        logger.info(f"EMA enabled with decay={ema_decay}, cpu_offload={ema_cpu_offload}")
+        callbacks.append(EMACallback(decay=ema_decay, cpu_offload=ema_cpu_offload))
+
     ## Learning Rate Monitor
     callbacks.append(LearningRateMonitor(logging_interval="epoch", log_momentum=True))
 
@@ -174,6 +181,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         "logger": loggers,
         "callbacks": callbacks,
         "max_epochs": cfg.training.get("max_epochs", 10),
+        "precision": cfg.training.get("precision", "32"),
         "accelerator": cfg.training.get("accelerator", "auto"),
         "devices": cfg.training.get("devices", "auto"),
         "gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0),
