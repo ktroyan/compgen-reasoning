@@ -113,7 +113,10 @@ class TRMEncoder(nn.Module):
         self.T = cfg.model.get("trm_T", 3)  # refinement depth
         self.n_latent_updates = cfg.model.get("trm_n", 6)    # number of times to update the latent state z in each refinement
 
-        self.z_init = nn.Parameter(torch.randn(1, self.max_seq_len, self.d_model))    # learnable initial latent state; [1, S, D] and we will slice it to match the grid tokens part of the sequence
+        # Latent state z initialization
+        # NOTE: See if better to use self.register_buffer("z_init", trunc_normal_init_(torch.empty(self.d_model), std=1), persistent=True)) similar to the TRM code
+        # self.z_init = nn.Parameter(torch.randn(1, self.max_seq_len, self.d_model))    # learnable initial latent state; [1, S, D] and we will slice it to match the grid tokens part of the sequence
+        self.register_buffer("z_init", torch.randn(1, self.max_seq_len, self.d_model), persistent=True)
 
         # --- Gradient Checkpointing ---
         self.use_activations_checkpointing = cfg.network.encoder.get("use_activations_checkpointing", False)
@@ -135,9 +138,9 @@ class TRMEncoder(nn.Module):
 
             for layer in self.layers:
                 if use_checkpointing:
-                    h = checkpoint(layer, h, src_key_padding_mask, use_reentrant=False)
+                    h = checkpoint(layer, h, src_mask=None, src_key_padding_mask=src_key_padding_mask, use_reentrant=False)
                 else:
-                    h = layer(h, src_key_padding_mask=src_key_padding_mask)
+                    h = layer(h, src_mask=None, src_key_padding_mask=src_key_padding_mask)
 
             z = self.norm(h)
 
@@ -159,9 +162,10 @@ class TRMEncoder(nn.Module):
             
         """
 
-        # Check if any input token ID is larger than what the embedding table was set to handle
-        if src.max() >= self.vocab_size:
-            raise ValueError(f"Input contains token ID {src.max().item()}, but Embedding vocab_size is {self.vocab_size}.")
+        # # Debugging check if any input token ID is larger than what the embedding table was set to handle
+        # NOTE: This triggers a GPU to CPU sync, which can be expensive given the number of forward passes performed when using TRM, so we should avoid doing this check during training oncce we know there is no issue there.
+        # if src.max() >= self.vocab_size:
+        #     raise ValueError(f"Input contains token ID {src.max().item()}, but Embedding vocab_size is {self.vocab_size}.")
 
         # Ensure type is LongTensor
         src = src.long()
@@ -203,7 +207,8 @@ class TRMEncoder(nn.Module):
                 # Update improved answer y based on the current answer y and the new latent state z
                 h = y + z
                 for layer in self.layers:
-                    h = layer(h, src_key_padding_mask=src_key_padding_mask)
+                    h = layer(h, src_mask=None, src_key_padding_mask=src_key_padding_mask)
+                
                 y = self.norm(h)
 
         # -----------------------------------------------------
@@ -216,9 +221,9 @@ class TRMEncoder(nn.Module):
         # Loop through the encoder layers
         for layer in self.layers:
             if self.use_activations_checkpointing:
-                h = checkpoint(layer, h, src_key_padding_mask, use_reentrant=False)
+                h = checkpoint(layer, h, src_mask=None, src_key_padding_mask=src_key_padding_mask, use_reentrant=False)
             else:
-                h = layer(h, src_key_padding_mask=src_key_padding_mask)
+                h = layer(h, src_mask=None, src_key_padding_mask=src_key_padding_mask)
         
         y_grad = self.norm(h)   # [B, S, D]; apply layer normalization to the final output of the encoder stack
 
