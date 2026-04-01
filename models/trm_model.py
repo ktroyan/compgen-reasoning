@@ -31,7 +31,7 @@ from utility.logging_utils import logger
 from networks.trm_encoder import TRMEncoder
 from networks.trm_decoder import TRMDecoder
 
-from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics
+from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics, stce_loss
 
 
 class ModelModule(pl.LightningModule):
@@ -74,7 +74,7 @@ class ModelModule(pl.LightningModule):
 
     def _compute_loss(self, logits: torch.Tensor, targets: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
         """
-        Cross-entropy or focal loss with optional foreground class weighting and padding ignored.
+        Cross-entropy / StCE / focal loss with optional foreground class weighting and padding ignored.
 
         Args:
             logits:  [B, S, C] or already reshaped [B*S, C]
@@ -85,6 +85,7 @@ class ModelModule(pl.LightningModule):
 
         Returns:
             loss: scalar or [B] depending on `reduction`
+        
         """
         B = targets.shape[0] if targets.dim() == 2 else None
         S = targets.shape[1] if targets.dim() == 2 else None
@@ -95,12 +96,16 @@ class ModelModule(pl.LightningModule):
         weight = getattr(self, "loss_weights", None)
         pad_id = getattr(self, "pad_token_id", -100)
 
-        ce = F.cross_entropy(
-            logits_flat, targets_flat,
-            weight=weight,
-            ignore_index=pad_id,
-            reduction="none"
-        )  # [B*S]; 0.0 at ignored (pad) positions
+        if self.loss_func == "stce":
+            ce = stce_loss(logits_flat, targets_flat, pad_id, weight=weight)  # [B*S]; 0.0 at pad positions
+
+        else:
+            ce = F.cross_entropy(
+                logits_flat, targets_flat,
+                weight=weight,
+                ignore_index=pad_id,
+                reduction="none"
+            )  # [B*S]; 0.0 at ignored (pad) positions
 
         if self.loss_func == "focal":
             # Down-weight easy examples: (1 - p_t)^gamma * CE
@@ -143,8 +148,14 @@ class TRMModel(ModelModule):
         self.epoch_metrics =[]
 
         logger.info(f"Initializing TRM (Encoder + MLP Decoder) with d_model={self.d_model}")
-        self.encoder = TRMEncoder(cfg)
-        self.decoder = TRMDecoder(cfg)
+        
+        if cfg.training.get("use_torch_compile", False):
+            logger.info("Compiling TRMEncoder and TRMDecoder with torch.compile for faster training...")
+            self.encoder = torch.compile(TRMEncoder(cfg), fullgraph=False)
+            self.decoder = torch.compile(TRMDecoder(cfg), fullgraph=False)
+        else:
+            self.encoder = TRMEncoder(cfg)
+            self.decoder = TRMDecoder(cfg)
 
         # --- Loss Function ---
         pad_id = cfg.data.pad_token_id
@@ -162,6 +173,7 @@ class TRMModel(ModelModule):
         self.pad_token_id = pad_id
         self.loss_func = cfg.model.get("loss_func", "cross_entropy")
         self.focal_gamma = cfg.model.get("focal_gamma", 2.0)
+        self.q_loss_weight = cfg.model.get("q_loss_weight", 1.0)
 
         # --- Logging ---
         self.epoch_samples = {}
@@ -301,7 +313,7 @@ class TRMModel(ModelModule):
                 reduction="none"
             )  # [B]
 
-            loss_per_sample = ce_loss + self.cfg.model.get("q_loss_weight", 1.0) * q_loss
+            loss_per_sample = ce_loss + self.q_loss_weight * q_loss
 
             # Only accumulate loss for active samples
             # Accumulating the loss across all recursive steps is called Deep Supervision. Note that we only do it for training
@@ -417,15 +429,12 @@ class TRMModel(ModelModule):
                         z_next
                     )
 
-                    if halted.all():
-                        break
-
                 if halted.all():
                     break
 
-        loss = self._compute_loss(logits, tgt_grid, reduction="mean")
+            loss = self._compute_loss(logits, tgt_grid, reduction="mean")
 
-        preds = torch.argmax(logits, dim=-1)
+            preds = torch.argmax(logits, dim=-1)
 
         metrics = self.compute_metrics(preds, tgt_grid)
 
@@ -577,12 +586,12 @@ class TRMModel(ModelModule):
                         z_next
                     )
 
-                    if halted.all():
-                        break
+                if halted.all():
+                    break
 
-        loss = self._compute_loss(logits, tgt_grid, reduction="mean")
+            loss = self._compute_loss(logits, tgt_grid, reduction="mean")
 
-        preds = torch.argmax(logits, dim=-1)
+            preds = torch.argmax(logits, dim=-1)
 
         metrics = self.compute_metrics(preds, tgt_grid)
 
@@ -594,8 +603,6 @@ class TRMModel(ModelModule):
         self.log(f"test/{prefix}_acc_no_pad", metrics["acc_no_pad"], on_step=False, on_epoch=True, add_dataloader_idx=False, prog_bar=True)
         self.log(f"test/{prefix}_grid_acc_no_pad", metrics["grid_acc_no_pad"], on_step=False, on_epoch=True, add_dataloader_idx=False, prog_bar=True)
 
-        preds = torch.argmax(logits, dim=-1)
-        
         src_cpu = src.detach().cpu()
         tgt_cpu = tgt.detach().cpu()
         preds_cpu = preds.detach().cpu()
@@ -691,7 +698,7 @@ class TRMModel(ModelModule):
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
         
         elif self.cfg.model.lr_scheduler.type == 'cosine':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.training.max_epochs, eta_min=1e-6)
 
         elif self.cfg.model.lr_scheduler.type == 'step':
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
