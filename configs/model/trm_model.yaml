@@ -16,7 +16,7 @@ input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input emb
 output_vocab_size: ${data.output_vocab_size}  # this is the vocab size for the output layer; it should be equal to the number of possible tokens that can appear in the grid we want to predict
 output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens); this should be equal to output_vocab_size
 
-d_model: 256  # input dimension; 128
+d_model: 512  # input dimension; 128; in TRM paper: 512
 
 dropout: 0.1
 
@@ -33,12 +33,12 @@ rpe:
   type: "2d-rope"  # 1d-rope, 2d-rope
 
 # Recursion
-N_sup: 16   # maximum number of recursive steps over the same sample during training
-trm_n: 6    # number of loops to updated the latent state within the latent recursion
-trm_T: 3    # number of refinement loops (T-1 without gradients and 1 with gradients)
+N_sup: 16   # maximum number of recursive steps over the same sample during training; in TRM paper: 16
+trm_n: 3    # number of loops to updated the latent state within the latent recursion; in TRM paper: 6
+trm_T: 3    # number of refinement loops (T-1 without gradients and 1 with gradients); in TRM paper: 3
 
 # Loss
-loss_func: "cross_entropy"  # "cross_entropy" | "focal"
+loss_func: "cross_entropy"  # "cross_entropy" | "focal" | "stce" (StableMax Cross-Entropy)
 foreground_weight: 10.0     # weight for non-background cells (values 1-9) relative to background (0); set to 1.0 to disable
 focal_gamma: 2.0            # down-weighting exponent for easy examples (only used when loss_func is set to "focal")
 q_loss_weight: 0.5          # weight for the halting Q-node when calculating the total loss (reconstruction loss + q_loss)
