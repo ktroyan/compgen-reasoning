@@ -1,0 +1,6 @@
+output_dim: ${model.d_model}  # must match backbone output dimension (cfg.model.d_model)
+
+# Width multiplier for the backbone.
+# Channel layout: C --> 2C --> 4C --> 4C --> 8C --> 4C --> embed_dim
+# Approx encoder params: C=32 --> 1.4M | C=62 --> 5.0M | C=64 --> 5.4M
+base_channels: 64

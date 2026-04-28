@@ -78,39 +78,3 @@ def save_num_params_to_wandb(model):
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     wandb.run.summary.update({"num_trainable_params": num_params})
 
-
-# -------------------------------------------------------
-# Lightning Logger
-# -------------------------------------------------------
-def build_wandb_logger(cfg):
-    """
-    Build PyTorch Lightning WandB logger.
-    """
-
-    return WandbLogger(
-        project=cfg.wandb.project_name,
-        entity=cfg.wandb.entity_name,
-        name=cfg.wandb.run_name,
-        save_dir=cfg.output_dir,
-        log_model=True,
-    )
-
-
-# -------------------------------------------------------
-# Artifact logging
-# -------------------------------------------------------
-def save_checkpoint_artifact(logger, checkpoint_path, artifact_name):
-    """
-    Save a checkpoint as a WandB artifact.
-    """
-
-    if logger is None:
-        return
-
-    artifact = wandb.Artifact(
-        name=artifact_name,
-        type="model",
-    )
-    artifact.add_file(checkpoint_path)
-
-    logger.experiment.log_artifact(artifact)

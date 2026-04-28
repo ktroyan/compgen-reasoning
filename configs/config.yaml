@@ -16,7 +16,7 @@ defaults:
   - wandb: default
 
 # Global seed
-seed: 42
+seed: 1997
 
 # Device configuration
 device: "cuda"

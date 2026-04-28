@@ -4,6 +4,9 @@ command:
   - run
   - ${program}
   - ${args_no_hyphens}
+  - model=resnet_model
+  - network/encoder=resnet_encoder
+  - network/decoder=mlp_decoder
   - data.use_ood_val=true
   - data.use_ood_test=true
 
@@ -43,15 +46,12 @@ parameters:
 
   training.batch_size:
     values: [128]
-  
+
   model.lr:
     values: [1e-5]
 
   # model.weight_decay:
   #   values: [1e-1, 1e-2]
 
-  model.lr_warmup.num_steps:
-    values: [200]
-
-  # network.encoder.num_layers:
-    # values: [2, 4, 6]
+  # network.encoder.base_channels:
+  #   values: [32, 64]

@@ -1,4 +1,6 @@
 name: "transformer_model"
+encoder_network: "transformer_encoder"
+decoder_network: "mlp_decoder"
 
 # --- Architecture Constraints (computed in the Data Module) ---
 max_h: ${data.max_h}  # one dimension of the grid, useful to calculate the grid size; e.g. for positional encoding and attention masking
@@ -16,7 +18,7 @@ input_vocab_size: ${data.vocab_size}  # this is the vocab size for the input emb
 output_vocab_size: ${data.output_vocab_size}  # this is the vocab size for the output layer; it should be equal to the number of possible tokens that can appear in the grid we want to predict
 output_dim: ${data.output_vocab_size}  # predicts logits (for the vocabulary, i.e. all possible tokens); this should be equal to output_vocab_size
 
-d_model: 256  # input dimension; 128
+d_model: 256  # input dimension; need to use 256 instead of 512 as in our TRM encoder otherwise the network would be too shallow to match the number of parameters
 
 dropout: 0.1
 
@@ -24,12 +26,12 @@ dropout: 0.1
 use_task_tokens: true
 
 ape:
-  use_ape: false
-  type: "learned"   # learned | 1d-sincos | 2d-sincos
+  use_ape: true
+  type: "2d-sincos"   # learned | 1d-sincos | 2d-sincos
   mixer: "sum"    # sum | learnable_scaling | weighted_sum | layer_norm | rms_norm
 
 rpe:
-  use_rpe: true
+  use_rpe: false
   type: "2d-rope"  # 1d-rope, 2d-rope
 
 # Loss
@@ -40,7 +42,7 @@ focal_gamma: 2.0            # down-weighting exponent for easy examples (only us
 # --- Optimization ---
 optimizer: "adamw"  # "adamw" | "adam" | "sgd"
 lr: 1e-4
-embeddings_lr: 1e-2  # initial learning rate for the update of the input embeddings layer; set higher than the rest of the model to encourage faster learning of the input embeddings 
+embeddings_lr: 1e-4  # initial learning rate for the update of the input embeddings layer; set higher than the rest of the model to encourage faster learning of the input embeddings 
 weight_decay: 1e-1
 
 lr_scheduler:

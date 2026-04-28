@@ -4,7 +4,7 @@
 
 # To run on RTX 3090 GPU:
 # #SBATCH --gres=gpu:rtx3090:1
-# #SBATCH --nodelist=node04,node05,node06   # node04 has 8 3090 GPUs, 128 CPUs and 252GB RAM
+# #SBATCH --nodelist=node04                 # node04 has 8 3090 GPUs, 128 CPUs and 252GB RAM
 # #SBATCH --cpus-per-task=16                # Number of CPU cores
 # #SBATCH --mem=30G                         # Max memory
 
@@ -21,11 +21,10 @@
 #SBATCH -D ./
 #SBATCH --output=logs/%x_%j.out        # Standard output
 #SBATCH --error=logs/%x_%j.err         # Standard error
-#SBATCH -p rtx5090
-#SBATCH --gres=gpu:rtx5090:1
-#SBATCH --nodelist=node10              # node10 has 4 RTX5090 GPUs, 96 CPUs, and 382GB RAM
-#SBATCH --cpus-per-task=24             # Number of CPU cores; use 24 at most if using node 09 or 10
-#SBATCH --mem=92G                      # Max memory
+#SBATCH --gres=gpu:rtx3090:1
+#SBATCH --nodelist=node06                 # node04 has 8 3090 GPUs, 128 CPUs and 252GB RAM
+#SBATCH --cpus-per-task=16                # Number of CPU cores
+#SBATCH --mem=62G                         # Max memory
 #SBATCH --ntasks=1
 #SBATCH --time=96:00:00                # Max runtime (HH:MM:SS)
 #SBATCH --export=ALL,SRC_DIR=/cluster/raid/data/ktroyan/compgen-reasoning

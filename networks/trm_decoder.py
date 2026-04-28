@@ -1,13 +1,11 @@
 """
 networks/trm_decoder.py
 
-TODO:
-- Defines the TRMDecoder module used in TRMModel.
-- Takes encoded representation and provides logits that can be used to predict/reconstruct the target.
+Defines TRMDecoder, the MLP decoder used in TRMModel.
 
-Description:
-A simple MLP Decoder. It projects the Encoder's output representation of a point/token (in high dimensional space)
-directly to the Target vocabulary size/dimension (output dimension).
+- A two-layer MLP (d_model -> hidden_dim -> output_dim) applied independently at each grid token position. 
+- Projects the TRMEncoder's output embeddings to logits over the output vocabulary.
+- Activation function and dropout rate are configurable via the network decoder config.
 
 """
 
@@ -41,7 +39,7 @@ class TRMDecoder(nn.Module):
         if activation_layer is None:
             raise ValueError(f"Activation function '{activation_fn}' not recognized. Choose from ['relu', 'gelu', 'leaky_relu']")
 
-        # MLP
+        # MLP (3-layer)
         # self.mlp = nn.Sequential(
         #     nn.Linear(self.d_model, hidden_dim),
         #     activation_layer,
@@ -52,6 +50,7 @@ class TRMDecoder(nn.Module):
         #     nn.Linear(hidden_dim, self.output_dim)
         # )
 
+        # MLP (2-layer)
         self.mlp = nn.Sequential(
             nn.Linear(self.d_model, hidden_dim),
             activation_layer,
@@ -60,9 +59,5 @@ class TRMDecoder(nn.Module):
         )
     
     def forward(self, x, tgt=None, memory_key_padding_mask=None):
-        """
-        """
-
-        logits = self.mlp(x)    
-
+        logits = self.mlp(x)  # [B, H*W, output_dim]
         return logits

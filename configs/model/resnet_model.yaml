@@ -1,0 +1,44 @@
+name: "resnet_model"
+encoder_network: "resnet_encoder"
+decoder_network: "mlp_decoder"
+
+# --- Architecture Constraints (computed in the Data Module) ---
+max_h: ${data.max_h}
+max_w: ${data.max_w}
+max_task_seq_len: null  # set at runtime by the DataModule
+max_seq_len: null       # set at runtime by the DataModule
+total_seq_special_tokens_prepended: null
+total_seq_special_tokens_appended: null
+
+pad_token_id: ${data.pad_token_id}
+
+# --- Dimensions ---
+input_vocab_size: ${data.vocab_size}      # used for one-hot encoding channels
+output_vocab_size: ${data.output_vocab_size}
+output_dim: ${data.output_vocab_size}
+
+d_model: 256  # embedding dimension; also the ResNet backbone output channels
+
+# --- Modeling techniques ---
+use_task_tokens: true
+
+# Loss
+loss_func: "cross_entropy"  # "cross_entropy" | "focal" | "stce"
+foreground_weight: 10.0     # weight for non-background cells (values 1-9); set to 1.0 to disable
+focal_gamma: 2.0            # down-weighting exponent for easy examples (only used with focal loss)
+
+# --- Optimization ---
+optimizer: "adamw"  # "adamw" | "adam" | "sgd"
+lr: 1e-4
+weight_decay: 1e-1
+
+lr_scheduler:
+  type: "cosine"  # "cosine" | "step" | "plateau"
+  interval: "epoch"
+  frequency: 1
+  monitored_metric: "val/id_loss"
+
+lr_warmup:
+  enabled: false
+  type: "linear"
+  num_steps: 200

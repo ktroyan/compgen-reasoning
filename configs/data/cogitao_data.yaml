@@ -1,7 +1,7 @@
 name: "cogitao_data"
 
 data_source: "huggingface"  # huggingface or Local
-data_path: "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1/experiment_1_100k" # for HF, use 'hf://' schema which points directly to the dataset folder
+data_path: "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_1_3M" # for HF, use 'hf://' schema which points directly to the dataset folder
 num_workers: 16
 
 # Dataset splits
@@ -10,6 +10,7 @@ use_ood_val: true
 use_id_test: true
 use_ood_test: true
 
+num_train_samples: null  # set to an integer to limit the number of training samples used
 shuffle_train: false
 
 base_vocab_size: 14  # 0-9 (10) + PAD, BOS, EOS, UNK (4)

@@ -1,24 +1,17 @@
 """
 training.py
-Performs model training.
 
-TODO:
-1) Instantiate the PTL Trainer w.r.t. the config.
+Contains run_training, which builds the PTL Trainer and runs trainer.fit.
 
-2) Configure callbacks (checkpointing, early stopping, intermediate metrics/results, etc.) w.r.t. the config.
-
-3) Configure loggers (WandB, CSV/JSON).
-
-4) Given the model and train/val data modules received as input, 
-   perform training, log results to WandB, and save checkpoints locally and to WandB.
-
-5) Return the trained model (best performance w.r.t. model selction criterion) directly and 
-   the relevant checkpoint paths (e.g., best ID checkpoint, best OOD checkpoint if applicable, last checkpoint).
+- Configures loggers: CSV and WandB (if enabled).
+- Configures callbacks: ID and OOD model checkpointing, optional early stopping,
+  optional EMA, LR monitor, and a SLURM-friendly epoch summary logger.
+- Builds the PTL Trainer with parameters from config (precision, gradient clipping, accumulation, etc.).
+- Returns the best model by set metric, the latest model, and a dict of checkpoint paths.
 
 """
 
 import os
-import sys
 import torch
 import wandb
 import pytorch_lightning as pl
@@ -30,52 +23,16 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import WandbLogger, CSVLogger
 from omegaconf import DictConfig
 
-# Custom Logger import
+## Personal imports
+# Utilities
 from utility.logging_utils import logger
-from callbacks.ema_callback import EMACallback
+from utility.callbacks.ema_callback import EMACallback
+from utility.callbacks.epoch_summary_callback import EpochSummaryCallback
 
 # For flash / memory-efficient kernels when available (e.g., A100, RTX40xx, etc.), otherwise
 # use math kernels for older GPUs.
 torch.nn.attention.sdpa_kernel("auto")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-
-class EpochSummaryCallback(pl.Callback):
-    """Logs a clean, readable epoch summary at the end of each validation pass.
-
-    This is especially useful in non-TTY environments (e.g. SLURM log files) where
-    the PTL progress bar is disabled and no visual epoch summary is printed.
-    """
-
-    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        if trainer.sanity_checking:
-            return
-
-        metrics = trainer.callback_metrics
-        train_m = {k: v for k, v in metrics.items() if k.startswith("train/")}
-        val_m   = {k: v for k, v in metrics.items() if k.startswith("val/")}
-
-        sep = "-" * 62
-        lines = [sep, f"  Epoch {trainer.current_epoch:>4d} Summary", sep]
-
-        def _fmt(v):
-            try:
-                return f"{float(v):.5f}"
-            except (TypeError, ValueError):
-                return str(v)
-
-        if train_m:
-            lines.append("  TRAIN")
-            for k in sorted(train_m):
-                lines.append(f"    {k:<38}  {_fmt(train_m[k])}")
-
-        if val_m:
-            lines.append("  VAL")
-            for k in sorted(val_m):
-                lines.append(f"    {k:<38}  {_fmt(val_m[k])}")
-
-        lines.append(sep)
-        logger.info("\n" + "\n".join(lines))
 
 
 def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.LightningDataModule):
@@ -184,10 +141,11 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         "precision": cfg.training.get("precision", "32"),
         "accelerator": cfg.training.get("accelerator", "auto"),
         "devices": cfg.training.get("devices", "auto"),
-        "gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0),
+        # With manual optimization, gradient clipping is handled in training_step; passing it to the Trainer raises an error
+        **({} if cfg.training.get("use_manual_optimization", False) else {"gradient_clip_val": cfg.training.get("gradient_clip_val", 1.0)}),
         "accumulate_grad_batches": cfg.training.get("accumulate_grad_batches", 1),
         "check_val_every_n_epoch": cfg.training.get("check_val_every_n_epoch", 1),
-        # Disable the progress bar under SLURM. SLURM_JOB_ID is always set for batch jobs.
+        # Disable the progress bar under SLURM (to not interfere with logging). SLURM_JOB_ID is always set for batch jobs.
         "enable_progress_bar": cfg.logging.get("use_progress_bar", False) and "SLURM_JOB_ID" not in os.environ,
         "log_every_n_steps": cfg.logging.get("log_every_n_steps", 5),
         "deterministic": False
@@ -199,7 +157,9 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
     logger.info("Starting Trainer.fit()...")
     trainer.fit(model, datamodule=datamodule)
 
-    ## Results Handling
+    # ------------------------------------------------------------------
+    # Results Handling
+    # ------------------------------------------------------------------
     best_id_path = ckpt_callback_id.best_model_path
     last_path = ckpt_callback_id.last_model_path
     best_ood_path = ckpt_callback_ood.best_model_path if ckpt_callback_ood else None
@@ -211,6 +171,7 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
         logger.info(f"Loading best ID model from {best_id_path}")
         best_model = type(model).load_from_checkpoint(best_id_path, cfg=cfg, weights_only=False)
         latest_model = model
+    
     else:
         best_model = model
         latest_model = model

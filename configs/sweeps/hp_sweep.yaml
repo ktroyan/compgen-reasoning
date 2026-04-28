@@ -4,9 +4,8 @@ command:
   - run
   - ${program}
   - ${args_no_hyphens}
-  - model.N_sup=4
-  - model.trm_n=3
   - "data.data_path=hf://datasets/yassinetb/COGITAO/supplementary/Sample_Efficiency/exp_setting_3/experiment_1"
+  - data.num_train_samples=1000
   - data.use_ood_val=false
   - data.use_ood_test=false
 
@@ -18,17 +17,27 @@ metric:
 
 parameters:
 
+  model.N_sup:
+    values: [8, 16]
+
+  model.trm_n:
+    values: [3, 6]
+
+  model.trm_T:
+    values: [3, 6]
+
   training.max_epochs:
     values: [10]
 
   training.batch_size:
-    values: [32, 64]
+    values: [128]
 
   model.lr:
     values: [0.001, 0.0005, 0.0001]
 
   model.d_model:
-    values: [128, 512]
+    values: [128, 512, 1024]
 
   model.hidden_dim:
     values: [128, 256]
+

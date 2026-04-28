@@ -53,7 +53,8 @@ class AbsolutePositionalEncoding(nn.Module):
         - layer_norm: apply layer normalization after summing the input and APE
         - rms_norm: apply RMS normalization after summing the input and APE
 
-    If selected, 2D APE is only applied to the grid tokens as they live in a 2D space manifold, while the prefix and suffix tokens (e.g., <BOS>, <EOS>, task tokens) are encoded with 1D APE as they live in a sequence.
+    If selected, 2D APE is only applied to the grid tokens as they live in a 2D space manifold, while the special tokens (prefix and suffix tokens such as <BOS>, <EOS>, task tokens) are encoded with 1D APE as they only live in a sequence.
+    
     """
 
     def __init__(self, cfg):
@@ -170,7 +171,7 @@ class AbsolutePositionalEncoding(nn.Module):
         prefix_len = self.total_seq_special_tokens_prepended
         suffix_len = self.total_seq_special_tokens_appended
 
-        grid_len = self.max_h * self.max_w
+        _grid_len = self.max_h * self.max_w
 
         # --- Prefix: 1D PE ---
         if prefix_len > 0:
@@ -235,6 +236,14 @@ class AbsolutePositionalEncoding(nn.Module):
 
         return self.dropout(x)
 
+def get_ape(cfg):
+    ape_type = cfg.model.ape.get("type", "learned")
+
+    if ape_type in ("learned", "1d-sincos", "2d-sincos"):
+        return AbsolutePositionalEncoding(cfg)
+    else:
+        raise ValueError(f"Unsupported APE type: {ape_type}")
+
 # -------------------------------------------------
 # Relative Positional Encoding (RPE)
 # -------------------------------------------------
@@ -243,6 +252,7 @@ class RotaryEmbedding1D(nn.Module):
     Adapted from nano-TRM codebase: https://github.com/olivkoch/nano-trm/blob/main/src/nn/modules/trm_block.py
 
     max_seq_len is the maximum number of positions we want to encode
+
     """
     def __init__(self, head_embed_dim, max_seq_len, base=10000):
         super().__init__()
@@ -302,8 +312,8 @@ class RotaryEmbedding2D(nn.Module):
 
     def _build_cache(self):
 
-        n_freq = self.inv_freq.shape[0]  # dim // 2
-        quarter = n_freq // 2           # dim // 4  (because 2D, so need to split the frequencies into two halves for row and column)
+        n_freq = self.inv_freq.shape[0] # dim // 2
+        quarter = n_freq // 2   # dim // 4  (because 2D, so need to split the frequencies into two halves for row and column)
 
         # -------------------------------------------------
         # Prefix (1D RoPE)
@@ -404,6 +414,7 @@ class MHSA(nn.Module):
     Multi-Head Self-Attention block. 
     
     TODO: Implement PoPE? Implement MTA? Etc.
+
     """
 
     def __init__(self, cfg, d_model, n_heads, attn_drop_p=0., proj_drop_p=0., qkv_bias=False):
@@ -421,10 +432,15 @@ class MHSA(nn.Module):
         self.proj = nn.Linear(d_model, d_model) # W_o
         self.proj_drop = nn.Dropout(proj_drop_p)
 
-        # --- RoPE ---
-        self.rpe_type = cfg.model.rpe.get("type", None)
+        # --- RPE ---
+        if cfg.model.rpe.get("use_rpe", False):
+            self.rpe_type = cfg.model.rpe.get("type", None)
+        else:
+            self.rpe_type = None
+    
         max_seq_len = cfg.model.max_seq_len
 
+        # RoPE
         if self.rpe_type == "1d-rope":
             self.rotary_emb = RotaryEmbedding1D(self.head_embed_dim,
                                                 max_seq_len,
@@ -468,7 +484,7 @@ class MHSA(nn.Module):
             cos, sin = cos[:seq_len].to(x.device), sin[:seq_len].to(x.device)
             x_q, x_k = apply_rotary_pos_emb(x_q, x_k, cos, sin)
 
-        # --- MASKING LOGIC ---
+        # --- Masking ---
         # F.scaled_dot_product_attention handles mask shapes:
         # If attn_mask is provided, it must be broadcastable to [B, H, S, S].
         # We generally use key_padding_mask for Encoder Self-Attention.
@@ -484,9 +500,9 @@ class MHSA(nn.Module):
             else:
                 mask = kp_mask_attend
         
-        # ---
+        # --- Attention Computation ---
 
-        # # Method 1: Raw compute of the attention scores
+        # # Method 1: Raw computation of the attention scores
         # # Compute the attention scores
         # attn = (x_q @ x_k.transpose(-2, -1))    # [B, num_heads, S, S]; attention matrix/logits
         # attn_scaled = attn * self.scale   # [B, num_heads, S, S]; scaled attention logits
@@ -514,6 +530,14 @@ class MHSA(nn.Module):
         
         return x
 
+def get_mhsa_block(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p):
+    mhsa_type = cfg.network.encoder.get("mhsa_type", "mhsa")
+
+    if mhsa_type == "mhsa":
+        return MHSA(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p)
+    else:
+        raise ValueError(f"Unsupported MHSA block: {mhsa_type}")
+
 # -------------------------------------------------
 # FeedForward block
 # -------------------------------------------------
@@ -537,7 +561,7 @@ class FeedForward(nn.Module):
 class ConvSwiGLU(nn.Module):
     def __init__(self, d_model, d_ff, dropout=0.0):
         super().__init__()
-        hidden_size = int(2/3 * d_ff * 2)   # TODO: see what hidden size to use instead of 2 * d_ff to keep the number of parameters similar to the MLP feedforward block
+        _hidden_size = int(2/3 * d_ff * 2)   # TODO: see what hidden size to use instead of 2 * d_ff to keep the number of parameters similar to the MLP feedforward block (useful for comparison)
         
         self.conv1 = nn.Conv1d(d_model, 2 * d_ff, kernel_size=1)
         self.conv2 = nn.Conv1d(d_ff, d_model, kernel_size=1)

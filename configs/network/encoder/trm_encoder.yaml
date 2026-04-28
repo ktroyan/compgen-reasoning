@@ -1,6 +1,6 @@
 output_dim: ${model.d_model}
 ff_dim: 1024
-num_layers: 6 # 6
+num_layers: 2 # 6; in TRM paper: 2
 num_heads: 4
 attn_dropout: 0.1
 proj_dropout: 0.0

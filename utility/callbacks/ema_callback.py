@@ -1,7 +1,8 @@
 """
 callbacks.ema_callback
 
-Exponential Moving Average (EMA) of model weights, as used in the TRM paper.
+Exponential Moving Average (EMA) of model weights.
+NOTE: This is used in the TRM paper.
 
 After each optimizer step, shadow weights are updated:
     ema_param = decay * ema_param + (1 - decay) * current_param
@@ -25,6 +26,7 @@ class EMACallback(pl.Callback):
     Args:
         decay: EMA decay factor (e.g. 0.999). Higher = slower-moving average.
         cpu_offload: Whether to store shadow weights on CPU to avoid increasing GPU memory and thus chance of OOM errors.
+    
     """
 
     def __init__(self, decay: float = 0.999, cpu_offload: bool = True):

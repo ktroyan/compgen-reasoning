@@ -1,8 +1,8 @@
 """
 networks/trm_encoder.py
 
-- Defines the TRMEncoder module used in TRMModel
-- Handles input grid sequences and produces encoded representations
+- Defines the TRM encoder through the TRMEncoder module used in TRMModel
+- Processes input sequences and produces encoded representations
 
 """
 
@@ -12,9 +12,9 @@ from torch.utils.checkpoint import checkpoint
 from omegaconf import DictConfig
 
 # Personal imports
-from .network_modules import AbsolutePositionalEncoding
+from .network_modules import get_ape
 from .network_modules import build_norm
-from .network_modules import MHSA
+from .network_modules import get_mhsa_block
 from .network_modules import get_ff_block
 from .network_modules import get_activation_layer
 from .network_modules import initialize_weights
@@ -30,14 +30,14 @@ class TRMEncoderLayer(nn.Module):
         proj_dropout_p = cfg.network.encoder.get("proj_dropout", 0.0)
         self.proj_dropout = nn.Dropout(proj_dropout_p)  # dropout layer for the output of the feedforward block before adding the residual connection
         # self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=attn_dropout, batch_first=True)   # PyTorch's built-in MultiheadAttention
-        self.mhsa_block = MHSA(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p)
+        self.mhsa_block = get_mhsa_block(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p)
 
         # Activation function
         self.activation_layer = get_activation_layer(cfg)
+        
         # FeedForward layers
         self.ff_block = get_ff_block(cfg, d_model, d_ff, self.activation_layer)
         
-
         # Norm layers for the residual connections
         norm_type = cfg.network.encoder.get("norm", "layernorm")
         self.norm1 = build_norm(norm_type, d_model)
@@ -79,11 +79,11 @@ class TRMEncoder(nn.Module):
 
 
         # --- Input Embedding Layer ---
-        # NOTE: Using nn.Embedding is equivalent to using a OHE followed by a linear projection (e.g., 2DConv with kernel size 1).
-        # NOTE: nn.Embedding is essentially a lookup table that maps token IDs to dense vectors (embeddings).
+        # NOTE: Using nn.Embedding is equivalent to using a OHE followed by a linear projection (e.g., 2DConv with kernel size 1 stride 1).
+        #       nn.Embedding is essentially a lookup table that maps token IDs to dense vectors (embeddings).
         #       The input token IDs are expected to be in the range [0, vocab_size-1], where each ID corresponds to a specific token in the vocabulary.
-        #       The embedding layer learns a dense vector representation for each token ID during training, which allows the model to capture semantic relationships between tokens based on their usage in the training data.
-        #       The embedding layer is initialized with random weights from a normal distribution (mean=0, std=0.02).
+        #       The embedding layer (parameterized by weights) learns a dense vector representation for each token ID during training, which allows the model to capture semantic relationships between tokens based on their usage in the training data.
+        #       The embedding layer is initialized with random weights from a (supposedly) normal distribution (mean=0, std=0.02).
         self.input_embedding = nn.Embedding(self.vocab_size, self.d_model)
         # TODO: Set the initial LR for the update of the embeddings to 1e-2 or something higher than the rest of the model to encourage faster learning of the input embeddings, especially in the early stages of training when the model is still learning to map token IDs to meaningful representations.
         #       Also see for a better initial distribution
@@ -95,7 +95,7 @@ class TRMEncoder(nn.Module):
         # Absolute Positional Encoding (APE)
         if cfg.model.ape.get("use_ape", False):
             self.use_ape = True
-            self.pos_encoder = AbsolutePositionalEncoding(cfg)
+            self.pos_encoder = get_ape(cfg)
         else:
             self.use_ape = False
         
@@ -162,7 +162,7 @@ class TRMEncoder(nn.Module):
             
         """
 
-        # # Debugging check if any input token ID is larger than what the embedding table was set to handle
+        ## Debugging check if any input token ID is larger than what the embedding table was set to handle
         # NOTE: This triggers a GPU to CPU sync, which can be expensive given the number of forward passes performed when using TRM, so we should avoid doing this check during training oncce we know there is no issue there.
         # if src.max() >= self.vocab_size:
         #     raise ValueError(f"Input contains token ID {src.max().item()}, but Embedding vocab_size is {self.vocab_size}.")

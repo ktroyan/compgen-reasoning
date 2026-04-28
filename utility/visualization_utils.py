@@ -17,6 +17,7 @@ from utility.logging_utils import logger
 def get_arc_colormap():
     """
     Returns an ARC-like colormap and norm for grid tasks + Special Tokens.
+
     """
     # 0-9: Standard ARC colors
     hex_colors = [
@@ -25,7 +26,7 @@ def get_arc_colormap():
     ]
     
     # Special Token Colors (10, 11, 12, 13)
-    # NOTE: refer to config values
+    # NOTE: Refer to config values. Only PAD (10) is actually used in visualization since BOS/EOS/UNK are not in the grid.
     # 10 PAD: Very Light Gray
     # 11 BOS: Neon Green
     # 12 EOS: Neon Red

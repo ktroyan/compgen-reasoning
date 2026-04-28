@@ -2,6 +2,7 @@
 utility/general_utils.py
 
 General utility functions for reproducibility, saving, and memory handling.
+
 """
 
 import os
@@ -16,7 +17,7 @@ import torch
 # -------------------------------------------------------
 def set_seed(seed: int):
     """
-    Set all random seeds for full reproducibility.
+    Set all random seeds for reproducibility.
     """
 
     random.seed(seed)

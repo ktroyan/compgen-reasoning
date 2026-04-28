@@ -1,14 +1,12 @@
 """
 inference.py
-Performs model inference on a model checkpoint.
 
-TODO:
-1) Load model to be evaluated from the checkpoint path given if no model is directly provided as input.
+Contains run_inference, which runs the PTL test inference for a given model and data modules.
 
-2) Instantiate the PTL Trainer w.r.t. the config.
-
-3) Given the model and test data modules received as input,
-   perform inference, log results to WandB, and save results locally and to WandB.
+- Optionally loads model weights from a checkpoint path specified in the config.
+- Configures loggers: CSV and WandB (if enabled).
+- Runs trainer.test, which triggers test_step and on_test_epoch_end in the model.
+- Logs per-dataloader results and uploads results (e.g., test_predictions.json) to WandB.
 
 """
 
@@ -19,12 +17,12 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger, CSVLogger
 from omegaconf import DictConfig
 
-# Custom Logger import
+## Personal imports
 from utility.logging_utils import logger
 
 def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.LightningDataModule):
     """
-    Orchestrates the inference/testing process using PyTorch Lightning.
+    Test inference using PyTorch Lightning.
 
     """
 
@@ -34,7 +32,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
     logger.info(f"Inference output directory: {save_dir}")
 
     # ------------------------------------------------------------------
-    # 1) Load model from checkpoint (if explicitly provided)
+    # Load model from checkpoint (if explicitly provided)
     # ------------------------------------------------------------------
     # If "checkpoint_path" is set in config (e.g. via CLI or sweep), load that specific file.
     # Otherwise, assume 'model' already contains the weights (from the training phase).
@@ -56,7 +54,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
     model.eval()
 
     # ------------------------------------------------------------------
-    # 2) Configure Loggers
+    # Configure Loggers
     # ------------------------------------------------------------------
     loggers = []
     
@@ -70,7 +68,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
         loggers.append(wb_logger)
 
     # ------------------------------------------------------------------
-    # 3) Instantiate the PTL Trainer
+    # Instantiate the PTL Trainer
     # ------------------------------------------------------------------
     trainer_args = {
         "default_root_dir": save_dir,
@@ -84,7 +82,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
     trainer = pl.Trainer(**trainer_args)
 
     # ------------------------------------------------------------------
-    # 4) Perform Inference (Test Loop)
+    # Inference (Testing)
     # ------------------------------------------------------------------
     logger.info("Starting Trainer.test()...")
 
@@ -93,7 +91,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
     results = trainer.test(model, datamodule=datamodule)
 
     # ------------------------------------------------------------------
-    # 5) Display and Log Results
+    # Log Results
     # ------------------------------------------------------------------
     logger.success("--- Inference Results ---")
     
@@ -109,7 +107,7 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
         logger.info(f"Results: {results}")
 
     # ------------------------------------------------------------------
-    # 6) Artifact Management
+    # Artifact Management
     # ------------------------------------------------------------------
     # The model's `on_test_epoch_end` should have saved 'test_predictions.json' to CWD.
     prediction_file = os.path.join(save_dir, "test_predictions.json")
@@ -123,4 +121,4 @@ def run_inference(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Lig
     else:
         logger.warning("No 'test_predictions.json' found. Ensure 'on_test_epoch_end' in your model saves it.")
 
-    return results
+    return model, results

@@ -4,6 +4,9 @@ command:
   - run
   - ${program}
   - ${args_no_hyphens}
+  - model=transformer_model
+  - network/encoder=transformer_encoder
+  - network/decoder=mlp_decoder
   - data.use_ood_val=true
   - data.use_ood_test=true
 
@@ -50,8 +53,8 @@ parameters:
   # model.weight_decay:
   #   values: [1e-1, 1e-2]
 
-  model.lr_warmup.num_steps:
-    values: [200]
+  # model.lr_warmup.num_steps:
+  #   values: [200]
 
   # network.encoder.num_layers:
     # values: [2, 4, 6]

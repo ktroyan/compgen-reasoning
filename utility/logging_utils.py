@@ -2,6 +2,7 @@
 /utility/logging_utils.py
 
 This module sets up the logging infrastructure for the project using Loguru and defines custom PyTorch Lightning callbacks for logging gradient norms and parameter counts.
+
 """
 
 import os
@@ -16,7 +17,6 @@ from loguru import logger as loguru_logger
 # -----------------------
 # Main local logger
 # -----------------------
-
 class InterceptHandler(logging.Handler):
     def emit(self, record):
         # Get corresponding Loguru level
@@ -97,4 +97,3 @@ def setup_loguru(loguru_logger):
 
 # Configure the logger and make the object accessible to other modules
 logger = setup_loguru(loguru_logger)
-

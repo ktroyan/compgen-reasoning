@@ -5,27 +5,32 @@
 # - Loads environment and activates the venv
 # - Sets SLURM options for GPU nodes
 # - Runs the Python experiment with Hydra config
-# - Designed to work with single or multiple GPUs
-# #SBATCH --gres=gpu:1
 
 # To run on RTX 3090 GPU:
 # #SBATCH --gres=gpu:rtx3090:1
+# #SBATCH --nodelist=node04                 # node04 has 8 3090 GPUs, 128 CPUs and 252GB RAM
+# #SBATCH --cpus-per-task=16                # Number of CPU cores
+# #SBATCH --mem=62G                         # Max memory
+
 
 # To run on RTX 5090 GPU:
 # #SBATCH -p rtx5090
 # #SBATCH --gres=gpu:rtx5090:1
+# #SBATCH --nodelist=node10              # node10 has 4 RTX5090 GPUs, 96 CPUs, and 382GB RAM
+# #SBATCH --cpus-per-task=24             # Number of CPU cores
+# #SBATCH --mem=92G                      # Max memory
 
 
 #SBATCH --job-name=compgen-experiment  # Job name
 #SBATCH -D ./
-#SBATCH --output=logs/%x_%j.out        # Standard output
-#SBATCH --error=logs/%x_%j.err         # Standard error
-#SBATCH -p rtx5090
-#SBATCH --gres=gpu:rtx5090:1
+#SBATCH --output=logs/%x_%j.out           # Standard output
+#SBATCH --error=logs/%x_%j.err            # Standard error
+#SBATCH --gres=gpu:rtx3090:1
+#SBATCH --nodelist=node04                 # node04 has 8 3090 GPUs, 128 CPUs and 252GB RAM
+#SBATCH --cpus-per-task=16                # Number of CPU cores
+#SBATCH --mem=62G                         # Max memory
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64             # Number of CPU cores
-#SBATCH --time=24:00:00                # Max runtime (HH:MM:SS)
-#SBATCH --mem=128G                     # Max memory
+#SBATCH --time=96:00:00                   # Max runtime (HH:MM:SS)
 #SBATCH --export=ALL,SRC_DIR=/cluster/raid/data/ktroyan/compgen-reasoning
 
 set -e

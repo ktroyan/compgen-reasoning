@@ -4,6 +4,12 @@ command:
   - run
   - ${program}
   - ${args_no_hyphens}
+  - model=trm_model
+  - network/encoder=trm_encoder
+  - network/decoder=trm_decoder
+  - model.N_sup=8
+  - model.trm_n=6
+  - model.trm_T=3
   - data.use_ood_val=true
   - data.use_ood_test=true
 
@@ -19,12 +25,12 @@ parameters:
     values:
     ## Setting 1
     # Subsetting 1
-    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_1_3M"
-    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_2_3M"
+    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_1_3M"
+    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_2_3M"
     # Subsetting 2
-    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-2/experiment_1_3M"
+    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-2/experiment_1_3M"
     # Subsetting 3
-    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_1_3M"
+    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_1_3M"
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_2_3M"
     # Subsetting 4
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-4/experiment_1_3M"
@@ -50,8 +56,8 @@ parameters:
   # model.weight_decay:
   #   values: [1e-1, 1e-2]
 
-  model.lr_warmup.num_steps:
-    values: [200]
+  # model.lr_warmup.num_steps:
+  #   values: [200]
 
   # network.encoder.num_layers:
     # values: [2, 4, 6]

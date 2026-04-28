@@ -26,6 +26,7 @@ dependencies = [
     "ipykernel",
     "seaborn>=0.13.2",
     "datasets>=3.5.0",
+    "torchinfo>=1.8.0",
 ]
 
 [tool.uv.sources]

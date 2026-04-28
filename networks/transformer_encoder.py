@@ -1,8 +1,8 @@
 """
 networks/transformer_encoder.py
 
-- Defines the TransformerEncoder module used in TransformerModel
-- Handles input grid sequences and produces encoded representations
+- Defines a standard Transformer encoder through theTransformerEncoder module used in TransformerModel
+- Processes input sequences and produces encoded representations
 
 """
 
@@ -12,9 +12,9 @@ from torch.utils.checkpoint import checkpoint
 from omegaconf import DictConfig
 
 # Personal imports
-from .network_modules import AbsolutePositionalEncoding
+from .network_modules import get_ape
 from .network_modules import build_norm
-from .network_modules import MHSA
+from .network_modules import get_mhsa_block
 from .network_modules import get_ff_block
 from .network_modules import get_activation_layer
 from .network_modules import initialize_weights
@@ -30,14 +30,14 @@ class TransformerEncoderLayer(nn.Module):
         proj_dropout_p = cfg.network.encoder.get("proj_dropout", 0.0)
         self.proj_dropout = nn.Dropout(proj_dropout_p)  # dropout layer for the output of the feedforward block before adding the residual connection
         # self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=attn_dropout, batch_first=True)   # PyTorch's built-in MultiheadAttention
-        self.mhsa_block = MHSA(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p)
+        self.mhsa_block = get_mhsa_block(cfg, d_model, n_heads, attn_dropout_p, proj_dropout_p)
 
         # Activation function
         self.activation_layer = get_activation_layer(cfg)
+
         # FeedForward layers
         self.ff_block = get_ff_block(cfg, d_model, d_ff, self.activation_layer)
         
-
         # Norm layers for the residual connections
         norm_type = cfg.network.encoder.get("norm", "layernorm")
         self.norm1 = build_norm(norm_type, d_model)
@@ -78,11 +78,11 @@ class TransformerEncoder(nn.Module):
 
 
         # --- Input Embedding Layer ---
-        # NOTE: Using nn.Embedding is equivalent to using a OHE followed by a linear projection (e.g., 2DConv with kernel size 1).
-        # NOTE: nn.Embedding is essentially a lookup table that maps token IDs to dense vectors (embeddings).
+        # NOTE: Using nn.Embedding is equivalent to using a OHE followed by a linear projection (e.g., 2DConv with kernel size 1 stride 1).
+        #       nn.Embedding is essentially a lookup table that maps token IDs to dense vectors (embeddings).
         #       The input token IDs are expected to be in the range [0, vocab_size-1], where each ID corresponds to a specific token in the vocabulary.
-        #       The embedding layer learns a dense vector representation for each token ID during training, which allows the model to capture semantic relationships between tokens based on their usage in the training data.
-        #       The embedding layer is initialized with random weights from a normal distribution (mean=0, std=0.02).
+        #       The embedding layer (parameterized by weights) learns a dense vector representation for each token ID during training, which allows the model to capture semantic relationships between tokens based on their usage in the training data.
+        #       The embedding layer is initialized with random weights from a (supposedly) normal distribution (mean=0, std=0.02).
         self.input_embedding = nn.Embedding(self.vocab_size, self.d_model)
         # TODO: Set the initial LR for the update of the embeddings to 1e-2 or something higher than the rest of the model to encourage faster learning of the input embeddings, especially in the early stages of training when the model is still learning to map token IDs to meaningful representations.
         #       Also see for a better initial distribution
@@ -94,7 +94,7 @@ class TransformerEncoder(nn.Module):
         # Absolute Positional Encoding (APE)
         if cfg.model.ape.get("use_ape", False):
             self.use_ape = True
-            self.pos_encoder = AbsolutePositionalEncoding(cfg)
+            self.pos_encoder = get_ape(cfg)
         else:
             self.use_ape = False
         
@@ -127,11 +127,13 @@ class TransformerEncoder(nn.Module):
 
         Outputs:
             x: [B, S, D]; encoded representation of the input sequence
+            
         """
 
-        # Check if any input token ID is larger than what the embedding table was set to handle
-        if src.max() >= self.vocab_size:
-            raise ValueError(f"Input contains token ID {src.max().item()}, but Embedding vocab_size is {self.vocab_size}.")
+        # # Debugging check if any input token ID is larger than what the embedding table was set to handle
+        # NOTE: This triggers a GPU to CPU sync, which can be expensive given the number of forward passes performed
+        # if src.max() >= self.vocab_size:
+        #     raise ValueError(f"Input contains token ID {src.max().item()}, but Embedding vocab_size is {self.vocab_size}.")
 
         # Ensure type is LongTensor
         src = src.long()
@@ -153,7 +155,7 @@ class TransformerEncoder(nn.Module):
         # Loop through the encoder layers
         for layer in self.layers:
             if self.use_activations_checkpointing:
-                x = checkpoint(layer, x, src_key_padding_mask, use_reentrant=False)
+                x = checkpoint(layer, x, src_mask=None, src_key_padding_mask=src_key_padding_mask, use_reentrant=False)
             else:
                 x = layer(x, src_key_padding_mask=src_key_padding_mask)
         

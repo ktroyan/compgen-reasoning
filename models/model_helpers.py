@@ -5,20 +5,92 @@ models/model_helpers.py
 
 import math
 import os
-from typing import Optional
-
+from typing import Dict, Optional
 import torch
+import torch.nn as nn
+from omegaconf import DictConfig
+
+## Personal imports
+from utility.logging_utils import logger
 
 try:    # to avoid the program to crash if wandb is not installed and user doesn't want to use it
     import wandb
 except ImportError:
     wandb = None
 
-from utility.logging_utils import logger
+# ------------------------------------------------------------------
+# Network Factory
+# ------------------------------------------------------------------
+_NETWORK_REGISTRY = {
+    "trm_encoder":         ("networks.trm_encoder",         "TRMEncoder"),
+    "trm_decoder":         ("networks.trm_decoder",         "TRMDecoder"),
+    "transformer_encoder": ("networks.transformer_encoder", "TransformerEncoder"),
+    "resnet_encoder":      ("networks.resnet_encoder",      "ResNetEncoder"),
+    "mlp_decoder":         ("networks.mlp_decoder",         "MLPDecoder"),
+}
+
+def build_network(name: str, cfg: DictConfig) -> nn.Module:
+    """ Instantiate a network by its registry name (as specified in the model config). """
+    
+    if name not in _NETWORK_REGISTRY:
+        raise ValueError(f"Unknown network '{name}'. Registered networks: {list(_NETWORK_REGISTRY)}")
+    module_path, class_name = _NETWORK_REGISTRY[name]
+    import importlib
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    return cls(cfg)
+
+def maybe_compile(module: nn.Module, cfg: DictConfig) -> nn.Module:
+    """ Wrap a module with torch.compile if use_torch_compile is set in the training config. """
+    
+    if cfg.training.get("use_torch_compile", False):
+        logger.info(f"Compiling {type(module).__name__} with torch.compile...")
+        return torch.compile(module, fullgraph=False)
+    return module
 
 
 # ------------------------------------------------------------------
-# StableMax (StCE loss from "Grokking at the Edge of Numerical Stability")
+# Metrics
+# ------------------------------------------------------------------
+def compute_metrics(preds: torch.Tensor, targets: torch.Tensor, pad_id: int, per_sample: bool = False) -> Dict[str, torch.Tensor]:
+    """
+    Compute base metrics.
+
+    Args:
+        preds:      [B, S] predicted token ids
+        targets:    [B, S] ground truth token ids
+        pad_id:     token id used for padding (ignored in no-pad metrics)
+        per_sample: if True, return [B] tensors; if False (default), return scalars averaged across samples
+
+    NOTE: We use macro-averaged metrics (average over samples) rather than micro-averaged (overall token accuracy for the batch) as it is more informative for object metrics and grid metrics.
+          For example, this is important for the grid accuracy where one sample with a single token error would disproportionately affect the overall metric if micro-averaged.
+    """
+    correct = (preds == targets)   # [B, S]
+
+    acc             = correct.float().mean(dim=1)                                                          # [B]
+    grid_acc        = correct.all(dim=1).float()                                                           # [B]
+    non_pad         = targets != pad_id                                                                    # [B, S]
+    acc_no_pad      = (correct & non_pad).sum(dim=1).float() / non_pad.sum(dim=1).float().clamp(min=1)    # [B]
+    grid_acc_no_pad = ((correct | ~non_pad).all(dim=1)).float()                                            # [B]
+    obj_mask        = (targets >= 1) & (targets <= 9)                                                     # [B, S]
+    obj_acc         = (correct & obj_mask).sum(dim=1).float() / obj_mask.sum(dim=1).float().clamp(min=1)  # [B]
+
+    result = {
+        "acc": acc,
+        "acc_no_pad": acc_no_pad,
+        "grid_acc": grid_acc,
+        "grid_acc_no_pad": grid_acc_no_pad,
+        "obj_acc": obj_acc,
+    }
+
+    if per_sample:
+        return result
+    
+    return {k: v.mean() for k, v in result.items()}
+
+
+# ------------------------------------------------------------------
+# StableMax (StCE loss from paper "Grokking at the Edge of Numerical Stability")
 # ------------------------------------------------------------------
 def _s(x: torch.Tensor) -> torch.Tensor:
     """ Stable ramp function: s(x) = x+1 if x>=0, else 1/(1-x). Always > 0. """
@@ -60,6 +132,7 @@ def stce_loss(logits_flat: torch.Tensor, targets_flat: torch.Tensor, pad_id: int
 
 # ------------------------------------------------------------------
 # Truncated Normal Initialization (as per JAX since the PyTorch version is not mathematically correct)
+# Used for initialization of z latent state in TRM code.
 # See https://github.com/olivkoch/nano-trm/blob/main/src/nn/modules/utils.py#L13
 # ------------------------------------------------------------------
 def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2.0, upper: float = 2.0):
@@ -92,7 +165,7 @@ def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2
     return tensor
 
 # ------------------------------------------------------------------
-# Extract Evolution Samples
+# Extract Evolution Samples (useful for analysis)
 # ------------------------------------------------------------------
 def _extract_evolution_samples(model_module, src, tgt, preds):
     records =[]
@@ -108,13 +181,18 @@ def _extract_evolution_samples(model_module, src, tgt, preds):
                 "target": model_module.decode_sample(tgt[idx]),
                 "prediction": model_module.decode_sample(preds[idx])
             })
+
     return records
 
 
 # ------------------------------------------------------------------
-# Plot Evolution Grids
+# Plot Evolution Grids (useful for analysis)
 # ------------------------------------------------------------------
 def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
+    """ 
+    NOTE: Generated this function with AI; see for review.
+    """
+
     if not model_module.visualize_predictions or not records:
         return
         
@@ -133,7 +211,7 @@ def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
     use_tasks = model_module.cfg.model.get("use_task_tokens", False)
     max_task_len = model_module.cfg.model.get("max_task_seq_len", 0) if use_tasks else 0
     
-    # Calculate exactly where the grid tokens start in the source sequence
+    # Calculate where the grid tokens start in the source sequence
     src_start_idx = 1 + max_task_len
 
     n_samples = len(records)
@@ -150,7 +228,7 @@ def _plot_epoch_grids(model_module, phase_name: str, epoch: int, records: list):
         norm = mcolors.Normalize(vmin=0, vmax=19)
 
     def plot_pretty_grid(ax, data, title):
-        """Helper to plot a single grid cleanly with annotations."""
+        """ Helper to plot a single grid cleanly with annotations. """
         # Clip data to max 13 (UNK) to prevent colormap crashes if the model 
         # accidentally predicts a task token ID or OOD token.
         disp_data = np.clip(data, 0, 13)
@@ -239,6 +317,7 @@ def _plot_metrics(model_module, save_dir: str):
     all_keys = set()
     for m in model_module.epoch_metrics:
         all_keys.update(m.keys())
+    
     all_keys.discard("epoch")
 
     # Helper function to extract base metric name
@@ -275,4 +354,5 @@ def _plot_metrics(model_module, save_dir: str):
             plot_path = os.path.join(save_dir, f"plot_{safe_base}.png")
             plt.savefig(plot_path, bbox_inches='tight')
             logger.info(f"Saved metric plot to {plot_path}")
+
         plt.close()
