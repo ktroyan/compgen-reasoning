@@ -21,26 +21,40 @@ from typing import Dict, List, Optional
 
 from utility.logging_utils import logger
 
+try:
+    from datasets import Dataset as HFDataset
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # DataFrame utilities
 # ---------------------------------------------------------------------------
 
-def subset_dataframe(df: pd.DataFrame, n: Optional[int], seed: int) -> pd.DataFrame:
+def subset_dataframe(df, n: Optional[int], seed: int):
     """
     Return a random subset of `df` of size `n` (reproducible via `seed`).
 
-    If `n` is None or >= len(df), the full DataFrame is returned unchanged.
+    Accepts either a Pandas DataFrame or a HuggingFace Arrow Dataset.
+    If `n` is None or >= len(df), the full dataset is returned unchanged.
 
+    Uses numpy.random.RandomState internally so that the selected indices
+    are identical regardless of whether the input is Pandas or Arrow.
     """
     if n is None or n >= len(df):
         if n is not None:
             logger.info(f"num_samples={n} >= dataset size ({len(df)}); using full set.")
         return df
 
-    out = df.sample(n=n, random_state=seed).reset_index(drop=True)
-    logger.info(f"Dataset limited to {n} samples (random subset, seed={seed}).")
+    indices = np.random.RandomState(seed).choice(len(df), n, replace=False)
 
+    if isinstance(df, pd.DataFrame):
+        out = df.iloc[indices].reset_index(drop=True)
+    else:
+        out = df.select(indices.tolist())
+
+    logger.info(f"Dataset limited to {n} samples (random subset, seed={seed}).")
     return out
 
 # ---------------------------------------------------------------------------
@@ -111,16 +125,21 @@ AUGMENTATION_REGISTRY = {
     "grid_rotation": lambda df, n, s: augment_grid_rotation(df, n, s),
 }
 
-def apply_augmentation(df: pd.DataFrame, aug_cfg, seed: int) -> pd.DataFrame:
+def apply_augmentation(df, aug_cfg, seed: int):
     """
-    Apply a configured augmentation to a DataFrame and return the augmented copy.
+    Apply a configured augmentation to a dataset and return the augmented copy.
+
+    Accepts either a Pandas DataFrame or a HuggingFace Arrow Dataset.
+    When the input is an Arrow Dataset and augmentation is enabled, it is
+    temporarily converted to Pandas (augmentation creates new rows in memory
+    regardless), then converted back to an Arrow Dataset.
 
     `aug_cfg` must have:
       - use_data_augmentation (bool)
       - type (str): one of the keys in AUGMENTATION_REGISTRY
       - num_copies (int): number of augmented copies per original row
 
-    Returns the original DataFrame unchanged if augmentation is disabled or
+    Returns the original dataset unchanged if augmentation is disabled or
     the config is None.
 
     """
@@ -137,6 +156,10 @@ def apply_augmentation(df: pd.DataFrame, aug_cfg, seed: int) -> pd.DataFrame:
     num_copies = int(aug_cfg.get("num_copies", 1))
     original_len = len(df)
 
+    is_hf = HF_AVAILABLE and isinstance(df, HFDataset)
+    if is_hf:
+        df = df.to_pandas()
+
     logger.info(
         f"Applying '{aug_type}' augmentation "
         f"(num_copies={num_copies}, seed={seed})..."
@@ -145,7 +168,13 @@ def apply_augmentation(df: pd.DataFrame, aug_cfg, seed: int) -> pd.DataFrame:
     df = AUGMENTATION_REGISTRY[aug_type](df, num_copies, seed)
 
     logger.info(f"Dataset size after augmentation: {original_len} -> {len(df)} samples.")
-    
+    # Normalize the input and output columns back to Python lists before the Arrow conversion, ensuring a consistent type for PyArrow's schema inference
+    if is_hf:
+        for col in ['input', 'output']:
+            if col in df.columns:
+                df[col] = df[col].apply(lambda g: g.tolist() if isinstance(g, np.ndarray) else g)
+        df = HFDataset.from_pandas(df, preserve_index=False)
+
     return df
 
 

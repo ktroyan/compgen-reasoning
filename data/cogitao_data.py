@@ -9,6 +9,7 @@ Defines GridDataModule, a PTL DataModule for COGITAO grid data.
 - Applies optional data augmentation (e.g., color swap, grid flip, rotation) on
   the training set after the training (sub)set is created.
 - Provides train, ID/OOD validation, and ID/OOD test dataloaders.
+
 """
 
 import torch
@@ -221,21 +222,22 @@ class GridDataModule(pl.LightningDataModule):
         if self.data_source == "huggingface" and not HF_AVAILABLE:
             raise ImportError("datasets library not installed.")
 
-    def _log_sample_structure(self, df, split_name="train"):
+    def _log_sample_structure(self, ds, split_name="train"):
         """ Logs detailed structure of the first sample of a split. """
 
         message = ""
 
-        if df is None or len(df) == 0:
+        if ds is None or len(ds) == 0:
             logger.warning(f"{split_name} split is empty.")
             return
 
-        sample = df.iloc[0]
+        sample = ds[0]  # dict for Arrow Dataset, Series for Pandas
 
         message += f"Full sample:\n{sample}"
         message += f"\n--- Sample Structure ({split_name}) ---"
 
-        for key in sample.index:
+        keys = sample.keys() if hasattr(sample, "keys") else sample.index
+        for key in keys:
             value = sample[key]
 
             message += f"\nField: {key}"
@@ -263,12 +265,13 @@ class GridDataModule(pl.LightningDataModule):
 
         logger.info(message)
 
-    def _analyze_split(self, df) -> Tuple[int, int, Set[str], Set[Tuple[str]], int]:
+    def _analyze_split(self, ds) -> Tuple[int, int, Set[str], Set[Tuple[str]], int]:
         """
-        Scan a single COGITAO dataframe split for grid dimensions and task stats.
-        
+        Scan a single COGITAO dataset split for grid dimensions and task stats.
+        Streams through the data in batches to avoid loading it all into RAM.
+
         Returns: (max_h, max_w, atomic_tasks_set, sequence_set, max_seq_len)
-        
+
         """
         split_max_h, split_max_w = 0, 0
         split_atomic_tasks = set()
@@ -283,42 +286,39 @@ class GridDataModule(pl.LightningDataModule):
                     if grid.size > 0 and isinstance(grid[0], (list, np.ndarray)):
                         return (grid.shape[0], len(grid[0]))
                     return (1, grid.shape[0])
-
             if isinstance(grid, list):
                 if not grid:
                     return (0, 0)
                 if isinstance(grid[0], list):
                     return (len(grid), len(grid[0]))
                 return (1, len(grid))
-
             return (0, 0)
 
-        for col in ['input', 'output']:
-            if col in df.columns:
-                dims = df[col].apply(get_dims).tolist()
-                for d in dims:
-                    if isinstance(d, (tuple, list)) and len(d) == 2:
-                        h, w = d
-                        split_max_h = max(split_max_h, h)
-                        split_max_w = max(split_max_w, w)
-                    elif isinstance(d, (tuple, list)) and len(d) == 1:
-                        split_max_w = max(split_max_w, d[0])
+        col_names = ds.column_names if hasattr(ds, "column_names") else list(ds.columns)
 
-        if 'transformation_suite' in df.columns:
-            def process_task(suite):
-                if isinstance(suite, np.ndarray):
-                    suite = suite.tolist()
-                if not isinstance(suite, list):
-                    return 0
-                for t in suite:
-                    split_atomic_tasks.add(t)
-                if len(suite) > 0:
-                    split_sequences.add(tuple(suite))
-                return len(suite)
+        for batch in ds.iter(batch_size=1000):
+            for col in ['input', 'output']:
+                if col in col_names:
+                    for grid in batch[col]:
+                        d = get_dims(grid)
+                        if isinstance(d, (tuple, list)) and len(d) == 2:
+                            h, w = d
+                            split_max_h = max(split_max_h, h)
+                            split_max_w = max(split_max_w, w)
+                        elif isinstance(d, (tuple, list)) and len(d) == 1:
+                            split_max_w = max(split_max_w, d[0])
 
-            lengths = df['transformation_suite'].apply(process_task)
-            if not lengths.empty:
-                split_max_task_seq_len = lengths.max()
+            if 'transformation_suite' in col_names:
+                for suite in batch['transformation_suite']:
+                    if isinstance(suite, np.ndarray):
+                        suite = suite.tolist()
+                    if not isinstance(suite, list):
+                        continue
+                    for t in suite:
+                        split_atomic_tasks.add(t)
+                    if len(suite) > 0:
+                        split_sequences.add(tuple(suite))
+                    split_max_task_seq_len = max(split_max_task_seq_len, len(suite))
 
         return split_max_h, split_max_w, split_atomic_tasks, split_sequences, split_max_task_seq_len
 
@@ -334,8 +334,7 @@ class GridDataModule(pl.LightningDataModule):
                 base = hf_url.rstrip("/")
                 file_url = f"{base}/{filename}"
                 try:
-                    ds = load_dataset("parquet", data_files={"data": file_url}, split="data")
-                    return ds.to_pandas()
+                    return load_dataset("parquet", data_files={"data": file_url}, split="data")
                 except Exception:
                     logger.warning(f"File not found or load failed: {filename}")
                     return None
