@@ -4,11 +4,13 @@ main.py
 Entry point for running a single experiment or a sweep of experiments (e.g., over hyperparameters, over models, over experiments, etc.).
 Built on PyTorch, PyTorch Lightning (PTL) 2.x, Hydra, OmegaConf, and WandB.
 
-- Loads and resolves the experiment config via Hydra (defaults → sweep overrides → CLI overrides).
-- Optionally sets up a WandB run and merges sweep parameters into the config.
-- Instantiates the data module (GridDataModule) and model (TransformerModel or TRMModel).
-- Dispatches to run_training and/or run_inference based on config flags.
+- Loads and resolves the experiment config via Hydra and WandB 
+  - For standard run: config defaults -> CLI overrides
+  - For sweep run: config defaults -> sweep fix parameters overrides -> sweep dynamic parameters overrides.
+- Instantiates the data module (GridDataModule, ...) and model (TransformerModel, TRMModel, ...).
+- Call run_training and/or run_inference based on config.
 - Saves the final resolved config locally and syncs it to WandB.
+
 """
 
 import os
@@ -80,7 +82,7 @@ def main(cfg: DictConfig):
 
     orig_cwd = get_original_cwd()
 
-    if cfg.data.name == "cogitao_data":
+    if cfg.data.name in ("cogitao_data", "cogitao_data_EnvGen"):
         dm = GridDataModule(cfg=cfg)
     else:
         raise ValueError(f"DataModule '{cfg.data}' not recognized. Please check the config defaults and ensure the corresponding DataModule is implemented and imported in main.py.")
