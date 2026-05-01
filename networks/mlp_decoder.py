@@ -4,7 +4,7 @@ networks/mlp_decoder.py
 Defines MLPDecoder, a decoder network used in a model such as TransformerModel.
 
 - A two-layer MLP (d_model -> hidden_dim -> output_dim) applied independently at each grid token position. 
-- Projects the TRMEncoder's output embeddings to logits over the output vocabulary.
+- Projects the encoder's output embeddings to logits over the output vocabulary.
 - Activation function and dropout rate are configurable via the network decoder config.
 
 """
