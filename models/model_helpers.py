@@ -165,6 +165,105 @@ def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2
     return tensor
 
 # ------------------------------------------------------------------
+# Per-transformation ID metrics
+# ------------------------------------------------------------------
+def compute_per_transform_id_metrics(id_outputs: list) -> dict:
+    """
+    Group ID test outputs by transformation suite and compute average metrics per group.
+    Uses the per-sample metrics already stored in id_outputs — no tensor re-computation.
+
+    Returns:
+        dict mapping transform_key -> {
+            n_samples, id_acc, id_grid_acc, id_acc_no_pad, id_grid_acc_no_pad, id_obj_acc
+        }
+    """
+    if not id_outputs:
+        return {}
+
+    metric_keys = ["acc", "grid_acc", "acc_no_pad", "grid_acc_no_pad", "obj_acc"]
+    groups: Dict[str, list] = {}
+    for o in id_outputs:
+        key = "|".join(o.get("transformation_suite", []))
+        groups.setdefault(key, []).append(o)
+
+    result = {}
+    for key, samples in groups.items():
+        n = len(samples)
+        entry: Dict[str, float] = {"n_samples": n}
+        for m in metric_keys:
+            entry[f"id_{m}"] = sum(o[f"id_{m}"] for o in samples) / n
+        result[key] = entry
+
+    logger.info(f"Per-transformation ID metrics computed for {len(result)} transformation type(s).")
+    return result
+
+
+def log_per_transform_id_metrics(per_transform_id: dict, log_fn) -> dict:
+    """
+    Log per-transformation ID metrics to WandB.
+
+    - Aggregate scalars (std, worst-10 avg, best-10 avg per metric) via log_fn (self.log).
+    - Full WandB Table + bar charts for key metrics via wandb.log().
+
+    Returns the scalar summary dict for inclusion in the JSON output.
+    """
+    if not per_transform_id:
+        return {}
+
+    all_metrics  = ["acc", "grid_acc", "acc_no_pad", "grid_acc_no_pad", "obj_acc"]
+    chart_metrics = [
+        ("grid_acc",   "Grid Accuracy"),
+        ("obj_acc",    "Object Accuracy"),
+        ("acc_no_pad", "Accuracy (no pad)"),
+    ]
+    scalar_log: Dict[str, float] = {}
+
+    # --- Aggregate scalars (logged as normal summary columns) ---
+    for m in all_metrics:
+        vals = sorted(entry[f"id_{m}"] for entry in per_transform_id.values())
+        n = len(vals)
+        mean_val = sum(vals) / n
+        std = (sum((v - mean_val) ** 2 for v in vals) / n) ** 0.5
+        k = min(10, n)
+        worst10_avg = sum(vals[:k]) / k
+        best10_avg  = sum(vals[-k:]) / k
+
+        log_fn(f"test/id_per_transform_{m}_std",         std)
+        log_fn(f"test/id_per_transform_{m}_worst10_avg", worst10_avg)
+        log_fn(f"test/id_per_transform_{m}_best10_avg",  best10_avg)
+
+        scalar_log[f"id_per_transform_{m}_std"]         = std
+        scalar_log[f"id_per_transform_{m}_worst10_avg"] = worst10_avg
+        scalar_log[f"id_per_transform_{m}_best10_avg"]  = best10_avg
+
+    # --- WandB Table + bar charts ---
+    if wandb is not None and wandb.run is not None:
+        # Sort worst→best by grid_acc for a consistent, readable order
+        sorted_entries = sorted(per_transform_id.items(), key=lambda x: x[1]["id_grid_acc"])
+
+        # Full table (all metrics)
+        columns = ["transformation", "n_samples"] + [f"id_{m}" for m in all_metrics]
+        full_table = wandb.Table(columns=columns)
+        for key, entry in sorted_entries:
+            full_table.add_data(key, entry["n_samples"], *[entry[f"id_{m}"] for m in all_metrics])
+
+        # Bar charts (one per key metric, each needs its own Table instance)
+        wandb_payload: dict = {"test/id_per_transform_table": full_table}
+        for metric, title in chart_metrics:
+            chart_table = wandb.Table(columns=["transformation", f"id_{metric}"])
+            for key, entry in sorted_entries:
+                chart_table.add_data(key, entry[f"id_{metric}"])
+            wandb_payload[f"test/id_per_transform_{metric}_chart"] = wandb.plot.bar(
+                chart_table, "transformation", f"id_{metric}",
+                title=f"ID {title} per Transformation (worst→best)",
+            )
+
+        wandb.log(wandb_payload, commit=False)
+
+    return scalar_log
+
+
+# ------------------------------------------------------------------
 # Extract Evolution Samples (useful for analysis)
 # ------------------------------------------------------------------
 def _extract_evolution_samples(model_module, src, tgt, preds):

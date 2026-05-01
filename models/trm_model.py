@@ -33,7 +33,7 @@ import json
 ## Personal imports
 from utility.logging_utils import logger
 
-from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics, stce_loss, compute_metrics as _compute_metrics_fn, build_network, maybe_compile
+from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics, stce_loss, compute_metrics as _compute_metrics_fn, build_network, maybe_compile, compute_per_transform_id_metrics, log_per_transform_id_metrics
 
 
 class ModelModule(pl.LightningModule):
@@ -751,6 +751,12 @@ class TRMModel(ModelModule):
             logger.info(f"Per-transformation scatter data computed for {len(per_transform_stub)} transformation type(s).")
 
         # ------------------------------------------------------------------
+        # Per-transformation ID metrics
+        # ------------------------------------------------------------------
+        per_transform_id = compute_per_transform_id_metrics(id_outputs)
+        per_transform_id_scalars = log_per_transform_id_metrics(per_transform_id, self.log)
+
+        # ------------------------------------------------------------------
         # Meta-metric: Compositional Gap (ID metric - OOD metric for each basemetric)
         # ------------------------------------------------------------------
         comp_gap = {}
@@ -818,6 +824,22 @@ class TRMModel(ModelModule):
                 }
 
         # ------------------------------------------------------------------
+        # Log to WandB
+        # ------------------------------------------------------------------
+        for k, v in stubbornness_metrics.items():
+            self.log(f"test/{k}", v)
+        for k, v in comp_gap.items():
+            self.log(f"test/{k}", v)
+        for pfx, dist in halting_distribution.items():
+            self.log(f"test/{pfx}_halt_step_mean", dist["mean"])
+            self.log(f"test/{pfx}_halt_step_std", dist["std"])
+        for pfx, cal in q_head_calibration.items():
+            self.log(f"test/{pfx}_qhead_overall_precision", cal["overall_precision"])
+            self.log(f"test/{pfx}_qhead_early_halt_rate", cal["early_halt_rate"])
+            if cal["early_precision"] is not None:
+                self.log(f"test/{pfx}_qhead_early_precision", cal["early_precision"])
+
+        # ------------------------------------------------------------------
         # Save JSON
         # ------------------------------------------------------------------
         output_data = {
@@ -828,6 +850,8 @@ class TRMModel(ModelModule):
             "q_head_calibration": q_head_calibration,
             "iterative_accuracy": iter_acc,
             "per_transformation_stubbornness": per_transform_stub,
+            "per_transformation_id": per_transform_id,
+            "per_transformation_id_scalars": per_transform_id_scalars,
         }
 
         output_file = os.path.join(os.getcwd(), "test_predictions.json")

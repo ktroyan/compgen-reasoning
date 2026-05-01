@@ -27,7 +27,7 @@ import json
 
 from utility.logging_utils import logger
 
-from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics, stce_loss, compute_metrics as _compute_metrics_fn, build_network, maybe_compile
+from models.model_helpers import _extract_evolution_samples, _plot_epoch_grids, _plot_metrics, stce_loss, compute_metrics as _compute_metrics_fn, build_network, maybe_compile, compute_per_transform_id_metrics, log_per_transform_id_metrics
 
 
 class ModelModule(pl.LightningModule):
@@ -536,12 +536,24 @@ class ResNetModel(ModelModule):
 
             logger.info(f"Per-transformation scatter data computed for {len(per_transform_stub)} transformation type(s).")
 
+        # --- 4. Per-transformation ID metrics ---
+        per_transform_id = compute_per_transform_id_metrics(id_outputs)
+        per_transform_id_scalars = log_per_transform_id_metrics(per_transform_id, self.log)
+
+        # --- Log to WandB ---
+        for k, v in stubbornness_metrics.items():
+            self.log(f"test/{k}", v)
+        for k, v in comp_gap.items():
+            self.log(f"test/{k}", v)
+
         # --- Save JSON ---
         output_data = {
             "samples": self.test_outputs,
             "stubbornness": stubbornness_metrics,
             "compositional_gap": comp_gap,
             "per_transformation_stubbornness": per_transform_stub,
+            "per_transformation_id": per_transform_id,
+            "per_transformation_id_scalars": per_transform_id_scalars,
         }
 
         output_file = os.path.join(os.getcwd(), "test_predictions.json")
