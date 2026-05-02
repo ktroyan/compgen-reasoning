@@ -154,8 +154,13 @@ def run_training(cfg: DictConfig, model: pl.LightningModule, datamodule: pl.Ligh
     trainer = pl.Trainer(**trainer_args)
 
     ## Model Fitting
+    # [Optional] Resume from ckpt
+    resume_ckpt = cfg.experiment.get("checkpoint_path", None)
+    if resume_ckpt:
+        logger.warning(f"Resuming training from checkpoint: {resume_ckpt}")
+    
     logger.info("Starting Trainer.fit()...")
-    trainer.fit(model, datamodule=datamodule)
+    trainer.fit(model, datamodule=datamodule, ckpt_path=resume_ckpt, weights_only=False)
 
     # ------------------------------------------------------------------
     # Results Handling
