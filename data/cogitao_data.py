@@ -503,6 +503,15 @@ class GridDataModule(pl.LightningDataModule):
             self.val_ood_ds = make_ds(df_val_ood)
             self.test_ood_ds = make_ds(df_test_ood)
 
+            logger.info("--- Split Sizes ---")
+            logger.info(f"Train: {len(self.train_ds) if self.train_ds else 0:,} samples")
+            logger.info(f"Val ID: {len(self.val_id_ds) if self.val_id_ds else 0:,} samples")
+            if self.use_ood_val:
+                logger.info(f"Val OOD: {len(self.val_ood_ds) if self.val_ood_ds else 0:,} samples")
+            logger.info(f"Test ID: {len(self.test_id_ds) if self.test_id_ds else 0:,} samples")
+            if self.use_ood_test:
+                logger.info(f"Test OOD: {len(self.test_ood_ds) if self.test_ood_ds else 0:,} samples")
+
         elif self.data_source == "local":
             raise NotImplementedError("Local data loading not implemented.")
 
