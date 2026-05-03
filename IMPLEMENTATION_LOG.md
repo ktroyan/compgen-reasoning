@@ -55,7 +55,13 @@
   - Ran `Trainer(..., fast_dev_run=True, accelerator="cpu")` on a tiny in-memory DataLoader.
   - Result: passed training and validation, including iterative denoising validation.
 
+- `torch.compile` compatibility smoke test:
+  - Instantiated `LLaDAModel` with `training.use_torch_compile=true`.
+  - Result: compiled encoder still exposes custom `mask_input_sequence()` and `generate_masked_sequence()` methods.
+
 ## Commits
 
 - `38482e6 Add LLaDA masked diffusion model`
 - `9237670 Handle LLaDA EOS vocabulary sizing`
+- `be1f886 Document LLaDA implementation`
+- Follow-up commit: `Update LLaDA verification log`
