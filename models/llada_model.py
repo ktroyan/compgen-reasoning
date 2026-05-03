@@ -68,8 +68,11 @@ class LLaDAModel(ModelModule):
         cfg.network.encoder.max_sequence_length = cfg.model.llada_max_seq_len
         cfg.network.encoder.mask_token_id = cfg.model.mask_token_id
 
+        if cfg.model.get("predict_eos", False):
+            cfg.model.output_vocab_size = max(int(cfg.model.output_vocab_size), int(cfg.model.eos_token_id) + 1)
         if sage_thinking:
             cfg.model.output_vocab_size = max(int(cfg.model.output_vocab_size), int(cfg.model.thinking_token_id) + 1)
+        if cfg.model.output_dim != cfg.model.output_vocab_size:
             cfg.model.output_dim = cfg.model.output_vocab_size
 
         OmegaConf.set_struct(cfg, True)
