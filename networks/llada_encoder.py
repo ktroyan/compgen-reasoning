@@ -563,6 +563,8 @@ class LLaDAEncoder(nn.Module):
             if num_keep > 0:
                 selected_keep = torch.randperm(num_masked, device=target_ids.device)[:num_keep]
                 keep_positions = tuple(index[selected_keep] for index in mask_indices)
+                # Keep these tokens visible in the noised input, but leave
+                # mask_target unchanged so they still contribute to the loss.
                 keep_target[keep_positions] = False
             mask_indices = keep_target.nonzero(as_tuple=True)
             num_masked = mask_indices[0].numel()

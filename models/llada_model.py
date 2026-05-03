@@ -152,6 +152,9 @@ class LLaDAModel(ModelModule):
         if reduction == "mean":
             return (ce * valid.float()).sum() / valid.float().sum().clamp(min=1)
 
+        if reduction != "none_per_sample":
+            raise ValueError(f"Unsupported loss reduction: {reduction}")
+
         ce = ce.view(bsz, seq_len)
         valid = valid.view(bsz, seq_len).float()
         return (ce * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
