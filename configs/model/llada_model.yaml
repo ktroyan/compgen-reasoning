@@ -1,0 +1,48 @@
+name: "llada_model"
+encoder_network: "llada_encoder"
+decoder_network: null
+
+max_h: ${data.max_h}
+max_w: ${data.max_w}
+max_task_seq_len: null
+max_seq_len: null
+llada_max_seq_len: null
+total_seq_special_tokens_prepended: null
+total_seq_special_tokens_appended: null
+
+pad_token_id: ${data.pad_token_id}
+bos_token_id: ${data.bos_token_id}
+eos_token_id: ${data.eos_token_id}
+unk_token_id: ${data.unk_token_id}
+mask_token_id: null
+thinking_token_id: null
+
+input_vocab_size: ${data.vocab_size}
+output_vocab_size: ${data.output_vocab_size}
+output_dim: ${data.output_vocab_size}
+
+d_model: 128
+dropout: 0.0
+use_task_tokens: true
+predict_eos: false
+ignore_pad_in_diffusion_loss: true
+
+loss_func: "cross_entropy"
+foreground_weight: 10.0
+focal_gamma: 2.0
+
+optimizer: "adamw"
+lr: 1e-4
+embeddings_lr: 1e-4
+weight_decay: 1e-1
+
+lr_scheduler:
+  type: "cosine"
+  interval: "epoch"
+  frequency: 1
+  monitored_metric: "val/id_loss"
+
+lr_warmup:
+  enabled: true
+  type: "linear"
+  num_steps: 200

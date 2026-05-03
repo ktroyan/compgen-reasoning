@@ -1,0 +1,54 @@
+name: "llada_encoder"
+
+activation_type: "silu"
+attention_dropout: 0.0
+attention_layer_norm: false
+attention_layer_norm_with_affine: true
+bias_for_layer_norm: false
+block_group_size: 1
+block_type: "llama"
+embed_dim: ${model.d_model}
+embedding_dropout: 0.0
+embedding_size: null
+effective_n_kv_heads: null
+flash_attention: false
+include_bias: false
+include_qkv_bias: false
+init_cutoff_factor: null
+init_device: ${device}
+init_fn: "mitchell"
+init_std: 0.02
+input_emb_norm: false
+layer_norm_type: "rms"
+layer_norm_with_affine: true
+mask_token_id: null
+max_sequence_length: ${model.max_seq_len}
+mlp_hidden_size: 384
+mlp_ratio: 4
+model_type: "llada"
+multi_query_attention: null
+n_heads: 4
+n_kv_heads: 4
+n_layers: 6
+pad_token_id: ${data.pad_token_id}
+precision: "amp_bf16"
+residual_dropout: 0.0
+rms_norm_eps: 1e-5
+rope: true
+rope_full_precision: true
+rope_theta: 500000.0
+scale_logits: false
+thinking_token_id: null
+output_vocab_size: null
+use_cache: false
+vocab_size: null
+weight_tying: false
+activation_checkpointing: null
+
+diffusion:
+  steps: 32
+  cfg_scale: 0.0
+  temperature: 0.0
+  remasking: "low_confidence"
+  sage_thinking: false
+  mask_eps: 1e-3

@@ -26,6 +26,7 @@ _NETWORK_REGISTRY = {
     "trm_decoder":         ("networks.trm_decoder",         "TRMDecoder"),
     "transformer_encoder": ("networks.transformer_encoder", "TransformerEncoder"),
     "resnet_encoder":      ("networks.resnet_encoder",      "ResNetEncoder"),
+    "llada_encoder":       ("networks.llada_encoder",       "LLaDAEncoder"),
     "mlp_decoder":         ("networks.mlp_decoder",         "MLPDecoder"),
 }
 

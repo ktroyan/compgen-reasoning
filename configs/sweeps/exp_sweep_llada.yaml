@@ -1,0 +1,37 @@
+program: main.py
+command:
+  - uv
+  - run
+  - ${program}
+  - ${args_no_hyphens}
+  - model=llada_model
+  - network/encoder=llada_encoder
+  - network/decoder=mlp_decoder
+  - data.use_ood_val=true
+  - data.use_ood_test=true
+
+method: grid
+
+metric:
+  name: val/id_loss
+  goal: minimize
+
+parameters:
+  data.data_path:
+    values:
+      - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_2_3M"
+      - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-4/experiment_1_3M"
+      - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-5/experiment_1_3M"
+      - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_2-1/experiment_1_3M"
+
+  training.max_epochs:
+    values: [10]
+
+  training.batch_size:
+    values: [128]
+
+  model.lr:
+    values: [1e-4, 1e-5]
+
+  network.encoder.diffusion.steps:
+    values: [16, 32]

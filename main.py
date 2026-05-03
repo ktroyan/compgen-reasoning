@@ -33,6 +33,7 @@ from data.cogitao_data import GridDataModule
 from models.transformer_model import TransformerModel
 from models.trm_model import TRMModel
 from models.resnet_model import ResNetModel
+from models.llada_model import LLaDAModel
 
 # Utilities
 from utility.wandb_utils import save_num_params_to_wandb, save_num_samples_to_wandb, setup_wandb
@@ -46,7 +47,8 @@ torch.set_float32_matmul_precision("medium")
 MODEL_MAP = {
     "resnet_model": ResNetModel,
     "transformer_model": TransformerModel,
-    "trm_model": TRMModel
+    "trm_model": TRMModel,
+    "llada_model": LLaDAModel,
 }
 
 @hydra.main(config_path="configs", config_name="config", version_base="1.3")
