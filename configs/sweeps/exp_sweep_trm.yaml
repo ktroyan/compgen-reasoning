@@ -12,6 +12,7 @@ command:
   - model.trm_T=3
   - data.use_ood_val=true
   - data.use_ood_test=true
+  # - experiment.checkpoint_path=/cluster/raid/home/ktroyan/compgen-reasoning/outputs/2026-04-28/00-55-34/checkpoints/last.ckpt
 
 method: grid
 
@@ -23,14 +24,15 @@ parameters:
 
   data.data_path:
     values:
+    ### CompGen
     ## Setting 1
     # Subsetting 1
-    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_1_3M"
-    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_2_3M"
+    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_1_3M"
+    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-1/experiment_2_3M"
     # Subsetting 2
-    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-2/experiment_1_3M"
+    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-2/experiment_1_3M"
     # Subsetting 3
-    # - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_1_3M"
+    - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_1_3M"
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-3/experiment_2_3M"
     # Subsetting 4
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_1-4/experiment_1_3M"
@@ -43,6 +45,26 @@ parameters:
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_2-1/experiment_1_3M"
     # Subsetting 2
     - "hf://datasets/ktroyan/COGITAO/compgen/exp_setting_2-2/experiment_1_3M"
+
+    ### EnvGen
+    # Setting 1
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_1/experiment_1"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_1/experiment_2"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_1/experiment_3"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_1/experiment_4"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_1/experiment_5"
+    # Setting 2
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_2/experiment_1"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_2/experiment_2"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_2/experiment_3"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_2/experiment_4"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_2/experiment_5"
+    # Setting 3 (which was 4 in the past)
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_4/experiment_1"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_4/experiment_2"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_4/experiment_3"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_4/experiment_4"
+    - "hf://datasets/yassinetb/COGITAO/EnvGen/exp_setting_4/experiment_5"
 
   training.max_epochs:
     values: [10]
