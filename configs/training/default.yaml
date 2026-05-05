@@ -1,4 +1,4 @@
-max_epochs: 10
+max_epochs: 20
 batch_size: 64  # in TRM paper: 768, but we use a smaller batch size to fit the model on GPU; effective batch size can be increased by using gradient accumulation (see accumulate_grad_batches below)
 precision: "bf16-mixed" # use 16 for mixed precision training, 32 for full precision; "bf16-mixed"
 gradient_clip_val: 1.0
@@ -11,7 +11,7 @@ id_metric_mode: "max"
 ood_metric: "val/ood_acc"
 ood_metric_mode: "max"
 
-early_stopping: true
+early_stopping: false
 patience: 10
 save_top_k: 1
 

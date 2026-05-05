@@ -21,7 +21,7 @@ input_vocab_size: ${data.vocab_size}
 output_vocab_size: ${data.output_vocab_size}
 output_dim: ${data.output_vocab_size}
 
-d_model: 128
+d_model: 256
 dropout: 0.0
 use_task_tokens: true
 predict_eos: false

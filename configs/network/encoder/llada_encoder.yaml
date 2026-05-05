@@ -23,12 +23,12 @@ layer_norm_type: "rms"
 layer_norm_with_affine: true
 mask_token_id: null
 max_sequence_length: ${model.max_seq_len}
-mlp_hidden_size: 384
+mlp_hidden_size: 768
 mlp_ratio: 4
 model_type: "llada"
 multi_query_attention: null
-n_heads: 4
-n_kv_heads: 4
+n_heads: 8
+n_kv_heads: 8
 n_layers: 6
 pad_token_id: ${data.pad_token_id}
 precision: "amp_bf16"
